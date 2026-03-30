@@ -1,0 +1,8 @@
+(executable
+ (name simulator)
+ (modules simulator roulette_native))
+
+(test
+ (name test_properties)
+ (modules test_properties roulette_native)
+ (libraries qcheck-core))
