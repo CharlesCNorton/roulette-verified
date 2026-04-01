@@ -3104,6 +3104,72 @@ Proof.
   simpl in H. apply Nat.ltb_ge in H. exact H.
 Qed.
 
+(** ** Neighbours *)
+
+Fixpoint wheel_index_aux (p : nat) (l : list nat) : nat :=
+  match l with
+  | [] => 0
+  | x :: l' => if x =? p then 0 else S (wheel_index_aux p l')
+  end.
+
+Definition wheel_index (p : nat) : nat :=
+  wheel_index_aux p wheel_order.
+
+Definition neighbours (p k : nat) : list nat :=
+  let idx := wheel_index p in
+  map (fun j => nth ((idx + N_POCKETS - k + j) mod N_POCKETS) wheel_order 0)
+      (seq 0 (2 * k + 1)).
+
+Definition neighbours_bets (p k : nat) : list bet_type :=
+  map Straight (neighbours p k).
+
+Lemma neighbours_length :
+  forall p k, length (neighbours p k) = 2 * k + 1.
+Proof.
+  intros. unfold neighbours. rewrite length_map, length_seq. reflexivity.
+Qed.
+
+Lemma neighbours_0_1 : neighbours 0 1 = [26; 0; 32].
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma neighbours_17_2 : neighbours 17 2 = [2; 25; 17; 34; 6].
+Proof. vm_compute. reflexivity. Qed.
+
+(** ** Finals *)
+
+Definition finale (d : nat) : list nat :=
+  filter (fun n => (n mod 10) =? d) (seq 0 N_POCKETS).
+
+Theorem finale_count :
+  forall d, d < 10 ->
+  length (finale d) = if d <=? 6 then 4 else 3.
+Proof.
+  intros d Hd.
+  do 10 (destruct d as [|d]; [vm_compute; reflexivity|]); lia.
+Qed.
+
+Lemma finale_correct_check :
+  all_below 10 (fun d =>
+    forallb (fun n => (n mod 10) =? d) (finale d)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma finale_complete_check :
+  all_below 10 (fun d =>
+    forallb (fun n => negb ((n mod 10) =? d) ||
+                      existsb (Nat.eqb n) (finale d))
+            (seq 0 N_POCKETS)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma finale_empty_check :
+  all_below 27 (fun k => length (finale (10 + k)) =? 0) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma finale_4_eq : finale 4 = [4; 14; 24; 34].
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma finale_7_eq : finale 7 = [7; 17; 27].
+Proof. vm_compute. reflexivity. Qed.
+
 (* ================================================================== *)
 (** * Expected return                                                   *)
 (* ================================================================== *)
