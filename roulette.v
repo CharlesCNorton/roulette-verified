@@ -3222,24 +3222,6 @@ Definition en_prison_recovery_sum (b : bet_type) (stake : nat) : nat :=
     (map (fun n => snd (en_prison_step b n Imprisoned stake))
          (seq 0 N_POCKETS)) 0.
 
-(** Recovery sum for Red: 18. *)
-
-Lemma en_prison_recovery_red :
-  en_prison_recovery_sum RedBet 1 = 18.
-Proof. vm_compute. reflexivity. Qed.
-
-(** Recovery sum for Black: 18. *)
-
-Lemma en_prison_recovery_black :
-  en_prison_recovery_sum BlackBet 1 = 18.
-Proof. vm_compute. reflexivity. Qed.
-
-(** Recovery sum for Odd: 18. *)
-
-Lemma en_prison_recovery_odd :
-  en_prison_recovery_sum OddBet 1 = 18.
-Proof. vm_compute. reflexivity. Qed.
-
 (** Step-level characterization: the return component of
     [en_prison_step] decomposes into [bet_wins]-conditional
     payoffs, connecting the operational step function to the
@@ -3355,6 +3337,30 @@ Proof.
           (even_money_all_cover_18 b Hin).
   unfold N_POCKETS, Qeq, Qplus, Qmult. simpl. lia.
 Qed.
+
+(** General fixed-point: for ANY bet, not just even-money,
+    [V = cw/(P-1)] satisfies [V = cw/P + V/P] where [cw = count_wins b].
+    The equation is algebraic in [cw] and does not require a concrete
+    coverage count. *)
+
+(** General fixed-point over nat: for any bet, the one-spin
+    recovery [count_wins b] satisfies the recurrence
+    [cw * P = cw * (P - 1) + cw], decomposing N_POCKETS outcomes
+    into (P-1) resolving spins plus 1 re-imprisonment (zero). *)
+
+Theorem en_prison_fixed_point_general :
+  forall b,
+  (count_wins b * N_POCKETS =
+   count_wins b * (N_POCKETS - 1) + count_wins b)%nat.
+Proof. intro. unfold N_POCKETS. lia. Qed.
+
+(** General recovery: the one-spin recovery sum from [Imprisoned]
+    state equals [count_wins b] for any bet and unit stake.
+    Direct corollary of [en_prison_recovery_general]. *)
+
+Theorem en_prison_recovery_is_coverage :
+  forall b, (en_prison_recovery_sum b 1 = count_wins b)%nat.
+Proof. intro b. rewrite en_prison_recovery_general. lia. Qed.
 
 (** Concrete instantiation for readability:
     [1/2 = 18/37 + (1/37)(1/2)]. *)
@@ -3934,36 +3940,20 @@ Proof.
   rewrite (count_wins_us_eq_eu b Hwf). reflexivity.
 Qed.
 
-(** For standard bets, the American winning count equals the European
-    count (pocket 37 loses everything), so fairness_product_us = 36.
-    Verified computationally for representative bet types. *)
+(** For every well-formed non-Basket bet, the American fairness
+    product equals 36 — the same as the European product.  Follows
+    directly from [fairness_product_us_eq_eu] and [unified_fairness]. *)
 
-Lemma us_red_fp : fairness_product_us RedBet = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_black_fp : fairness_product_us BlackBet = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_odd_fp : fairness_product_us OddBet = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_even_fp : fairness_product_us EvenBet = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_low_fp : fairness_product_us LowBet = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_high_fp : fairness_product_us HighBet = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_straight_0_fp : fairness_product_us (Straight 0) = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_column1_fp : fairness_product_us (Column 1) = 36.
-Proof. vm_compute. reflexivity. Qed.
-
-Lemma us_dozen1_fp : fairness_product_us (Dozen 1) = 36.
-Proof. vm_compute. reflexivity. Qed.
+Theorem us_fairness_product_36 :
+  forall b, well_formed b -> b <> Basket ->
+  fairness_product_us b = N_POCKETS - 1.
+Proof.
+  intros b Hwf Hne.
+  rewrite fairness_product_us_eq_eu by exact Hwf.
+  destruct (unified_fairness b Hwf) as [Hfp | Hbsk].
+  - exact Hfp.
+  - contradiction.
+Qed.
 
 (** Even-money bet types for the American wheel. *)
 
