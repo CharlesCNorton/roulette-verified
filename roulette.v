@@ -25,6 +25,7 @@ From Stdlib Require Import List.
 From Stdlib Require Import Bool.
 From Stdlib Require Import Arith.
 From Stdlib Require Import Extraction.
+From Stdlib Require Import Sorting.Permutation.
 Import ListNotations.
 
 (* ================================================================== *)
@@ -306,9 +307,10 @@ Definition wheel_order : list nat :=
 Lemma wheel_order_length : length wheel_order = N_POCKETS.
 Proof. vm_compute. reflexivity. Qed.
 
-(** Permutation test via equal-length mutual containment.  Sound
-    on duplicate-free lists; see [wheel_order_nodup] and [seq_nodup]
-    for the prerequisite no-duplicate verifications. *)
+(** Boolean permutation check via length equality and mutual
+    containment.  Computational input for [wheel_order_Permutation]
+    and [sectors_Permutation], which lift the result to
+    [Stdlib.Sorting.Permutation.Permutation] via [NoDup_Permutation]. *)
 
 Definition is_permutation_of (l1 l2 : list nat) : bool :=
   (length l1 =? length l2) &&
@@ -321,8 +323,9 @@ Lemma wheel_order_is_permutation :
   is_permutation_of wheel_order (seq 0 N_POCKETS) = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(** No-duplicate verification for both lists, establishing the
-    soundness precondition of [is_permutation_of]. *)
+(** Boolean duplicate-freedom check over index pairs.  See
+    [wheel_order_NoDup] and [seq_NoDup_37] for the propositional
+    [NoDup] results derived via the [nodup_b] bridge below. *)
 
 Definition has_no_dup (l : list nat) : bool :=
   forallb (fun i =>
@@ -340,6 +343,89 @@ Proof. vm_compute. reflexivity. Qed.
 
 Lemma seq_nodup : has_no_dup (seq 0 N_POCKETS) = true.
 Proof. vm_compute. reflexivity. Qed.
+
+(** ** Permutation infrastructure
+
+    Bridge from boolean containment and duplicate-freedom checks
+    to the propositional [Permutation] and [NoDup] from [Stdlib]. *)
+
+(** Boolean duplicate-freedom checker with direct soundness
+    bridge to [NoDup]. *)
+
+Fixpoint nodup_b (l : list nat) : bool :=
+  match l with
+  | [] => true
+  | x :: l' => negb (existsb (Nat.eqb x) l') && nodup_b l'
+  end.
+
+Local Lemma existsb_eqb_In : forall x l,
+  existsb (Nat.eqb x) l = true -> In x l.
+Proof.
+  induction l as [|y l' IH]; intro H; [discriminate|].
+  simpl in H. apply orb_true_iff in H as [Heq|Hex].
+  - left. apply Nat.eqb_eq in Heq. exact (eq_sym Heq).
+  - right. exact (IH Hex).
+Qed.
+
+Local Lemma In_existsb_eqb : forall x l,
+  In x l -> existsb (Nat.eqb x) l = true.
+Proof.
+  induction l as [|y l' IH]; intro Hin; [destruct Hin|].
+  simpl. destruct Hin as [<-|Hin].
+  - rewrite Nat.eqb_refl. reflexivity.
+  - apply orb_true_iff. right. exact (IH Hin).
+Qed.
+
+Lemma nodup_b_NoDup : forall l, nodup_b l = true -> NoDup l.
+Proof.
+  induction l as [|x l' IH]; intro H; [constructor|].
+  simpl in H. apply andb_true_iff in H as [Hni Hnd]. constructor.
+  - intro Hin. apply negb_true_iff in Hni.
+    rewrite (In_existsb_eqb x l' Hin) in Hni. discriminate.
+  - exact (IH Hnd).
+Qed.
+
+(** Boolean mutual-containment implies propositional inclusion. *)
+
+Local Lemma forallb_existsb_incl : forall l1 l2 : list nat,
+  forallb (fun x => existsb (Nat.eqb x) l2) l1 = true ->
+  forall x, In x l1 -> In x l2.
+Proof.
+  induction l1 as [|a l1' IH]; intros l2 H x Hin.
+  - destruct Hin.
+  - simpl in H. apply andb_true_iff in H as [Ha Hrest].
+    destruct Hin as [<-|Hin].
+    + exact (existsb_eqb_In a l2 Ha).
+    + exact (IH l2 Hrest x Hin).
+Qed.
+
+(** [wheel_order] has no duplicates (propositional [NoDup]). *)
+
+Lemma wheel_order_NoDup : NoDup wheel_order.
+Proof. apply nodup_b_NoDup. vm_compute. reflexivity. Qed.
+
+(** [seq 0 N_POCKETS] has no duplicates (propositional [NoDup]). *)
+
+Lemma seq_NoDup_37 : NoDup (seq 0 N_POCKETS).
+Proof. apply nodup_b_NoDup. vm_compute. reflexivity. Qed.
+
+(** [wheel_order] is a permutation of [seq 0 N_POCKETS] in the
+    sense of [Stdlib.Sorting.Permutation.Permutation].  Proved
+    from [NoDup_Permutation] using the boolean containment checks
+    and the [nodup_b] soundness bridge. *)
+
+Theorem wheel_order_Permutation :
+  Permutation wheel_order (seq 0 N_POCKETS).
+Proof.
+  apply NoDup_Permutation.
+  - exact wheel_order_NoDup.
+  - exact seq_NoDup_37.
+  - intro x; split.
+    + apply (forallb_existsb_incl wheel_order (seq 0 N_POCKETS)).
+      vm_compute. reflexivity.
+    + apply (forallb_existsb_incl (seq 0 N_POCKETS) wheel_order).
+      vm_compute. reflexivity.
+Qed.
 
 (** Color alternation predicate: consecutive non-zero pockets
     on the physical wheel must alternate between red and black. *)
@@ -435,6 +521,27 @@ Lemma sectors_partition :
   is_permutation_of (voisins_du_zero ++ tiers_du_cylindre ++ orphelins)
            (seq 0 N_POCKETS) = true.
 Proof. vm_compute. reflexivity. Qed.
+
+(** The three call-bet sectors are a permutation of [seq 0 N_POCKETS]
+    in the sense of [Stdlib.Sorting.Permutation.Permutation]. *)
+
+Theorem sectors_Permutation :
+  Permutation (voisins_du_zero ++ tiers_du_cylindre ++ orphelins)
+              (seq 0 N_POCKETS).
+Proof.
+  apply NoDup_Permutation.
+  - apply nodup_b_NoDup. vm_compute. reflexivity.
+  - exact seq_NoDup_37.
+  - intro x; split.
+    + apply (forallb_existsb_incl
+               (voisins_du_zero ++ tiers_du_cylindre ++ orphelins)
+               (seq 0 N_POCKETS)).
+      vm_compute. reflexivity.
+    + apply (forallb_existsb_incl
+               (seq 0 N_POCKETS)
+               (voisins_du_zero ++ tiers_du_cylindre ++ orphelins)).
+      vm_compute. reflexivity.
+Qed.
 
 (** Standard Voisins du Zéro bet (9 chips):
     0-2-3 trio, 4-7 split, 12-15 split, 18-21 split, 19-22 split,
