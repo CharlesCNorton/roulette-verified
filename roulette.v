@@ -1538,6 +1538,142 @@ Proof. vm_compute. reflexivity. Qed.
 Definition valid_corner_anchor (a : nat) : bool :=
   (1 <=? a) && (a <=? 32) && negb (a mod 3 =? 0).
 
+(** All 24 permutations of a 4-pocket corner block. *)
+
+Definition corner_perms (m : nat) : list (nat * nat * nat * nat) :=
+  let a := m in let b := m+1 in let c := m+3 in let d := m+4 in
+  [(a,b,c,d); (a,b,d,c); (a,c,b,d); (a,c,d,b); (a,d,b,c); (a,d,c,b);
+   (b,a,c,d); (b,a,d,c); (b,c,a,d); (b,c,d,a); (b,d,a,c); (b,d,c,a);
+   (c,a,b,d); (c,a,d,b); (c,b,a,d); (c,b,d,a); (c,d,a,b); (c,d,b,a);
+   (d,a,b,c); (d,a,c,b); (d,b,a,c); (d,b,c,a); (d,c,a,b); (d,c,b,a)].
+
+(** Permutation-invariant corner block check. *)
+
+Definition is_corner_block (a b c d : nat) : bool :=
+  existsb (fun m =>
+    valid_corner_anchor m &&
+    existsb (fun t => let '(w, x, y, z) := t in
+      (a =? w) && (b =? x) && (c =? y) && (d =? z))
+    (corner_perms m))
+  (seq 0 33).
+
+(** Computational verification: every permutation of every valid
+    corner block has fairness product 36. *)
+
+Lemma corner_perms_fair_check :
+  all_below 33 (fun m =>
+    negb (valid_corner_anchor m) ||
+    forallb (fun t => let '(w, x, y, z) := t in
+      fairness_product (Corner w x y z) =? 36)
+    (corner_perms m)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma corner_perms_coverage_check :
+  all_below 33 (fun m =>
+    negb (valid_corner_anchor m) ||
+    forallb (fun t => let '(w, x, y, z) := t in
+      count_wins (Corner w x y z) =? 4)
+    (corner_perms m)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma corner_perms_bound_check :
+  all_below 33 (fun m =>
+    negb (valid_corner_anchor m) ||
+    forallb (fun t => let '(w, x, y, z) := t in
+      (w <? N_POCKETS) && (x <? N_POCKETS) &&
+      (y <? N_POCKETS) && (z <? N_POCKETS))
+    (corner_perms m)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Local Lemma existsb_witness {A : Type} (f : A -> bool) (l : list A) :
+  existsb f l = true -> exists x, In x l /\ f x = true.
+Proof.
+  induction l as [|a l' IH]; intro H; [discriminate|].
+  simpl in H. apply orb_true_iff in H as [Ha|Hl].
+  - exists a. split; [left; reflexivity | exact Ha].
+  - destruct (IH Hl) as [x [Hx Hfx]]. exists x. split; [right; exact Hx | exact Hfx].
+Qed.
+
+Local Lemma forallb_In_true {A : Type} (f : A -> bool) (l : list A) :
+  forallb f l = true -> forall x, In x l -> f x = true.
+Proof.
+  induction l as [|a l' IH]; intros H x Hx; [destruct Hx|].
+  simpl in H. apply andb_true_iff in H as [Ha Hl].
+  destruct Hx as [<-|Hx]; [exact Ha | exact (IH Hl x Hx)].
+Qed.
+
+(** Helper: given anchor m, use a per-permutation check. *)
+
+Local Lemma use_perm_check (check : nat * nat * nat * nat -> bool)
+    (m : nat) (t : nat * nat * nat * nat) :
+  In m (seq 0 33) ->
+  valid_corner_anchor m = true ->
+  In t (corner_perms m) ->
+  all_below 33 (fun m => negb (valid_corner_anchor m) ||
+    forallb (fun t => check t) (corner_perms m)) = true ->
+  check t = true.
+Proof.
+  intros Hm_in Hva Ht_in Hcheck.
+  assert (Hb : m < 33) by (apply in_seq in Hm_in; lia).
+  pose proof (all_below_correct _ _ Hcheck m Hb) as Hall.
+  change ((negb (valid_corner_anchor m) ||
+    forallb (fun t0 => check t0) (corner_perms m)) = true) in Hall.
+  rewrite Hva in Hall. change (negb true) with false in Hall.
+  rewrite orb_false_l in Hall.
+  exact (forallb_In_true _ _ Hall _ Ht_in).
+Qed.
+
+Theorem corner_fairness_general :
+  forall a b c d, is_corner_block a b c d = true ->
+  fairness_product (Corner a b c d) = 36.
+Proof.
+  intros a b c d H. unfold is_corner_block in H.
+  apply existsb_witness in H. destruct H as [m H]. destruct H as [Hm_in Hm].
+  apply andb_true_iff in Hm. destruct Hm as [Hva Hex].
+  apply existsb_witness in Hex. destruct Hex as [t Hex]. destruct Hex as [Ht_in Ht].
+  destruct t as [[[w x0] y] z].
+  simpl in Ht. destruct_all_andb. subst.
+  apply Nat.eqb_eq.
+  exact (use_perm_check _ m _ Hm_in Hva Ht_in corner_perms_fair_check).
+Qed.
+
+Theorem coverage_corner_general :
+  forall a b c d, is_corner_block a b c d = true ->
+  count_wins (Corner a b c d) = 4.
+Proof.
+  intros a b c d H. unfold is_corner_block in H.
+  apply existsb_witness in H. destruct H as [m H]. destruct H as [Hm_in Hm].
+  apply andb_true_iff in Hm. destruct Hm as [Hva Hex].
+  apply existsb_witness in Hex. destruct Hex as [t Hex]. destruct Hex as [Ht_in Ht].
+  destruct t as [[[w x0] y] z].
+  simpl in Ht. destruct_all_andb. subst.
+  apply Nat.eqb_eq.
+  exact (use_perm_check _ m _ Hm_in Hva Ht_in corner_perms_coverage_check).
+Qed.
+
+Lemma is_corner_block_bound :
+  forall a b c d, is_corner_block a b c d = true ->
+  a < N_POCKETS /\ b < N_POCKETS /\ c < N_POCKETS /\ d < N_POCKETS.
+Proof.
+  intros a b c d H. unfold is_corner_block in H.
+  apply existsb_witness in H. destruct H as [m H]. destruct H as [Hm_in Hm].
+  apply andb_true_iff in Hm. destruct Hm as [Hva Hex].
+  apply existsb_witness in Hex. destruct Hex as [t Hex]. destruct Hex as [Ht_in Ht].
+  destruct t as [[[w x0] y] z].
+  simpl in Ht. destruct_all_andb. subst.
+  pose proof (use_perm_check _ m _ Hm_in Hva Ht_in corner_perms_bound_check) as Hbnd.
+  simpl in Hbnd. unfold N_POCKETS in *. destruct_all_andb.
+  repeat split; lia.
+Qed.
+
+(** The old canonical form passes the block check. *)
+
+Lemma canonical_is_corner_block :
+  all_below 33 (fun a =>
+    negb (valid_corner_anchor a) ||
+    is_corner_block a (a+1) (a+3) (a+4)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
 (** Exactly 22 positions on the grid qualify as corner anchors. *)
 
 Lemma corner_anchor_count :
@@ -2242,9 +2378,7 @@ Definition well_formed (b : bet_type) : Prop :=
   | Straight k => k < N_POCKETS
   | Split a b => a < N_POCKETS /\ b < N_POCKETS /\ table_adjacent a b = true
   | Street row => 1 <= row /\ row <= 12
-  | Corner a b c d =>
-      1 <= a /\ a <= 32 /\ a mod 3 <> 0 /\
-      b = a + 1 /\ c = a + 3 /\ d = a + 4
+  | Corner a b c d => is_corner_block a b c d = true
   | SixLine r1 r2 => 1 <= r1 /\ r1 <= 12 /\ 1 <= r2 /\ r2 <= 12 /\
       (r2 = r1 + 1 \/ r1 = r2 + 1)
   | Trio v => v = 1 \/ v = 2
@@ -2317,9 +2451,7 @@ Definition well_formed_dec (b : bet_type) : bool :=
   | Straight k => k <? N_POCKETS
   | Split a b => (a <? N_POCKETS) && (b <? N_POCKETS) && table_adjacent a b
   | Street row => (1 <=? row) && (row <=? 12)
-  | Corner a b c d =>
-      (1 <=? a) && (a <=? 32) && negb (a mod 3 =? 0) &&
-      (b =? a + 1) && (c =? a + 3) && (d =? a + 4)
+  | Corner a b c d => is_corner_block a b c d
   | SixLine r1 r2 => (1 <=? r1) && (r1 <=? 12) && (1 <=? r2) && (r2 <=? 12) &&
       ((r2 =? r1 + 1) || (r1 =? r2 + 1))
   | Trio v => (v =? 1) || (v =? 2)
@@ -2346,16 +2478,7 @@ Proof.
     apply andb_true_iff in H as [H1 H2].
     apply Nat.leb_le in H1. apply Nat.leb_le in H2.
     split; assumption.
-  - (* Corner *)
-    apply andb_true_iff in H as [H Hd].
-    apply andb_true_iff in H as [H Hc].
-    apply andb_true_iff in H as [H Hb].
-    apply andb_true_iff in H as [H Hmod].
-    apply andb_true_iff in H as [H1 H32].
-    apply Nat.leb_le in H1. apply Nat.leb_le in H32.
-    apply negb_true_iff in Hmod. apply Nat.eqb_neq in Hmod.
-    apply Nat.eqb_eq in Hb. apply Nat.eqb_eq in Hc. apply Nat.eqb_eq in Hd.
-    repeat split; assumption.
+  - (* Corner *) exact H.
   - (* SixLine *)
     repeat (apply andb_true_iff in H as [H ?]).
     repeat match goal with
@@ -2584,8 +2707,7 @@ Proof.
   - left. apply straight_fairness. exact Hwf.
   - left. destruct Hwf as [Ha [Hb Hadj]]. apply split_fairness; assumption.
   - left. destruct Hwf as [H1 H12]. apply street_fairness; assumption.
-  - left. destruct Hwf as [H1 [H32 [Hmod [Hb [Hc Hd]]]]].
-    subst. exact (corner_fairness _ H1 H32 Hmod).
+  - left. exact (corner_fairness_general _ _ _ _ Hwf).
   - left. destruct Hwf as [H1 [H12a [H2 [H12b [Hr|Hr]]]]]; subst.
     + exact (sixline_fairness _ H1 (ltac:(lia) : row1 <= 11)).
     + (* reverse ordering: rewrite to canonical form via symmetry *)
@@ -2730,8 +2852,7 @@ Proof.
     intro Heq; subst; rewrite table_adjacent_irrefl in Hadj;
     [discriminate | exact Ha].
   - destruct Hwf as [H1 H12]. exact (street_covers_3_at _ H1 H12).
-  - destruct Hwf as [H1 [H32 [Hmod [-> [-> ->]]]]].
-    exact (coverage_corner _ H1 H32 Hmod).
+  - exact (coverage_corner_general _ _ _ _ Hwf).
   - destruct Hwf as [H1 [H12a [H2 [H12b [Hr|Hr]]]]]; subst.
     + exact (coverage_sixline _ H1 ltac:(lia)).
     + assert (Hcw : count_wins (SixLine (row2+1) row2) =
@@ -4226,10 +4347,9 @@ Proof.
     replace (n <=? (row - 1) * 3 + 1 + 2) with false
       by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
     rewrite andb_false_r. reflexivity.
-  - (* Corner *) destruct Hwf as [H1 [H32 [_ [-> [-> ->]]]]].
-    change (bet_wins (Corner _ _ _ _) n)
-      with ((n =? a) || (n =? a+1) || (n =? a+3) || (n =? a+4)).
-    repeat (apply orb_false_iff; split); apply Nat.eqb_neq;
+  - (* Corner *)
+    pose proof (is_corner_block_bound _ _ _ _ Hwf) as [Ha' [Hb' [Hc' Hd']]].
+    simpl. repeat (apply orb_false_iff; split); apply Nat.eqb_neq;
     unfold N_POCKETS in *; lia.
   - (* SixLine *) destruct Hwf as [H1 [H12a [H2 [H12b _]]]].
     change (bet_wins (SixLine _ _) n)
