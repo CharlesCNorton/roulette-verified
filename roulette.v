@@ -2700,6 +2700,50 @@ Qed.
     uniform house edge of 1/37.  Basket is excluded because its
     6:1 payout yields fairness_product = 28. *)
 
+(** A bet is standard when it is not the Basket top-line bet.
+    Every well-formed standard bet has fairness product 36. *)
+
+Definition is_standard (b : bet_type) : bool :=
+  match b with Basket => false | _ => true end.
+
+Lemma is_standard_iff_not_basket :
+  forall b, is_standard b = true <-> b <> Basket.
+Proof. destruct b; simpl; split; intros; try discriminate; try congruence. Qed.
+
+(** Every well-formed standard bet has the uniform fairness
+    product [N_POCKETS - 1 = 36]. *)
+
+Theorem standard_fairness :
+  forall b, well_formed b -> is_standard b = true ->
+  fairness_product b = N_POCKETS - 1.
+Proof.
+  intros b Hwf Hstd. destruct b; simpl in Hwf; try discriminate Hstd.
+  - apply straight_fairness. exact Hwf.
+  - destruct Hwf as [Ha [Hb Hadj]]. apply split_fairness; assumption.
+  - destruct Hwf as [H1 H12]. apply street_fairness; assumption.
+  - exact (corner_fairness_general _ _ _ _ Hwf).
+  - destruct Hwf as [H1 [H12a [H2 [H12b [Hr|Hr]]]]]; subst.
+    + exact (sixline_fairness _ H1 (ltac:(lia) : row1 <= 11)).
+    + assert (Hsym : fairness_product (SixLine (row2 + 1) row2) =
+                     fairness_product (SixLine row2 (row2 + 1))).
+      { unfold fairness_product, count_wins. f_equal. f_equal.
+        apply filter_ext. intro. apply sixline_bet_wins_sym. }
+      rewrite Hsym. apply sixline_fairness; lia.
+  - destruct Hwf as [Hv|Hv]; subst; vm_compute; reflexivity.
+  - contradiction.
+  - destruct Hwf as [H1 H3]. apply column_fairness; assumption.
+  - destruct Hwf as [H1 H3]. apply dozen_fairness; assumption.
+  - apply red_fairness.
+  - apply black_fairness.
+  - apply odd_fairness.
+  - apply even_fairness.
+  - apply low_fairness.
+  - apply high_fairness.
+Qed.
+
+(** Legacy form: every well-formed bet is either standard
+    (fairness = 36) or Basket. *)
+
 Theorem unified_fairness :
   forall b, well_formed b -> fairness_product b = N_POCKETS - 1 \/ b = Basket.
 Proof.
@@ -3548,10 +3592,9 @@ Theorem standard_expected_return :
   Qeq (expected_return_Q b) (Qmake 36 37).
 Proof.
   intros b Hwf Hne.
-  pose proof (unified_fairness b Hwf) as [Hfp | Hbsk].
-  - unfold expected_return_Q. unfold N_POCKETS in Hfp |- *.
-    rewrite Hfp. reflexivity.
-  - contradiction.
+  unfold expected_return_Q. unfold N_POCKETS in *.
+  rewrite (standard_fairness b Hwf ltac:(apply is_standard_iff_not_basket; exact Hne)).
+  reflexivity.
 Qed.
 
 (** Basket returns 28/37 per unit staked. *)
@@ -3573,7 +3616,7 @@ Theorem standard_house_edge :
   Qeq (1 - expected_return_Q b) (Qmake 1 37).
 Proof.
   intros b Hwf Hne.
-  pose proof (unified_fairness b Hwf) as [Hfp | Hbsk]; [| contradiction].
+  pose proof (standard_fairness b Hwf ltac:(apply is_standard_iff_not_basket; exact Hne)) as Hfp.
   unfold expected_return_Q, Qminus, Qplus, Qopp, Qeq.
   unfold N_POCKETS in Hfp |- *. rewrite Hfp. simpl. lia.
 Qed.
@@ -4460,9 +4503,7 @@ Theorem us_fairness_product_36 :
 Proof.
   intros b Hwf Hne.
   rewrite fairness_product_us_eq_eu by exact Hwf.
-  destruct (unified_fairness b Hwf) as [Hfp | Hbsk].
-  - exact Hfp.
-  - contradiction.
+  exact (standard_fairness b Hwf ltac:(apply is_standard_iff_not_basket; exact Hne)).
 Qed.
 
 (** Even-money bet types for the American wheel. *)
@@ -4513,7 +4554,7 @@ Theorem american_strictly_worse_all :
       (Qmake (Z.of_nat (fairness_product b)) (Pos.of_nat N_POCKETS)).
 Proof.
   intros b Hwf Hne.
-  pose proof (unified_fairness b Hwf) as [Hfp | Hbsk]; [| contradiction].
+  pose proof (standard_fairness b Hwf ltac:(apply is_standard_iff_not_basket; exact Hne)) as Hfp.
   rewrite (fairness_product_us_eq_eu b Hwf), Hfp.
   unfold Qlt, N_POCKETS, N_POCKETS_US. simpl. lia.
 Qed.
