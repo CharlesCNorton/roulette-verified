@@ -3566,6 +3566,178 @@ Proof.
   exact (portfolio_no_winning_system p Hne Hall).
 Qed.
 
+(* ================================================================== *)
+(** * Chip denominations, table limits, and session RTP                 *)
+(* ================================================================== *)
+
+(** ** Chip denominations *)
+
+(** Standard chip denominations (in cents): 0.25 through 1000.00. *)
+
+Definition standard_chips : list nat :=
+  [25; 50; 100; 500; 1000; 2500; 5000; 10000; 25000; 100000].
+
+(** A stake is chip-aligned when it is a positive multiple of
+    some standard denomination. *)
+
+Definition chip_aligned (stake : nat) : bool :=
+  (0 <? stake) &&
+  existsb (fun c => stake mod c =? 0) standard_chips.
+
+(** ** Table limits *)
+
+Record table_limits := mk_limits {
+  min_bet : nat;
+  max_inside : nat;
+  max_outside : nat;
+  max_exposure : nat
+}.
+
+Definition limits_valid (lim : table_limits) : bool :=
+  (0 <? min_bet lim) &&
+  (min_bet lim <=? max_inside lim) &&
+  (min_bet lim <=? max_outside lim) &&
+  (max_inside lim <=? max_exposure lim) &&
+  (max_outside lim <=? max_exposure lim).
+
+Definition bet_within_limits (lim : table_limits)
+    (b : bet_type) (stake : nat) : bool :=
+  let max := if expected_coverage b <=? 6
+             then max_inside lim
+             else max_outside lim in
+  (min_bet lim <=? stake) && (stake <=? max).
+
+Definition portfolio_within_limits (lim : table_limits)
+    (p : portfolio) : bool :=
+  forallb (fun bs => bet_within_limits lim (fst bs) (snd bs)) p &&
+  (total_stake p <=? max_exposure lim).
+
+Definition eu_standard_limits : table_limits :=
+  mk_limits 100 10000 50000 100000.
+
+Lemma eu_limits_valid : limits_valid eu_standard_limits = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma eu_red_500_ok :
+  bet_within_limits eu_standard_limits RedBet 500 = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma eu_50_too_low :
+  bet_within_limits eu_standard_limits RedBet 50 = false.
+Proof. vm_compute. reflexivity. Qed.
+
+(** ** Session RTP accounting *)
+
+Record session := mk_session {
+  session_wagered : nat;
+  session_returned : nat;
+  session_spins : nat
+}.
+
+Definition empty_session : session := mk_session 0 0 0.
+
+Definition record_spin (sess : session) (b : bet_type)
+    (stake outcome : nat) : session :=
+  mk_session
+    (session_wagered sess + stake)
+    (session_returned sess + net_return b stake outcome)
+    (S (session_spins sess)).
+
+Definition record_sweep (sess : session) (b : bet_type)
+    (stake : nat) : session :=
+  fold_left (fun s n => record_spin s b stake n)
+            (seq 0 N_POCKETS) sess.
+
+Lemma sweep_wagered :
+  forall sess b stake,
+  session_wagered (record_sweep sess b stake) =
+  session_wagered sess + N_POCKETS * stake.
+Proof.
+  intros. unfold record_sweep.
+  assert (H : forall l s,
+    session_wagered (fold_left (fun s0 n => record_spin s0 b stake n) l s) =
+    session_wagered s + length l * stake).
+  { induction l as [|n l' IH]; intro s; simpl; [lia|].
+    rewrite IH. simpl. lia. }
+  rewrite H, length_seq. reflexivity.
+Qed.
+
+Lemma sweep_returned :
+  forall sess b stake,
+  session_returned (record_sweep sess b stake) =
+  session_returned sess + expected_return_numerator b stake.
+Proof.
+  intros. unfold record_sweep, expected_return_numerator.
+  assert (H : forall l s,
+    session_returned (fold_left (fun s0 n => record_spin s0 b stake n) l s) =
+    fold_left Nat.add (map (net_return b stake) l) (session_returned s)).
+  { induction l as [|n l' IH]; intro s; simpl; [reflexivity|].
+    rewrite IH. simpl. rewrite fold_left_add_acc. lia. }
+  rewrite H, fold_left_add_acc. lia.
+Qed.
+
+Fixpoint repeat_sweep (sess : session) (b : bet_type)
+    (stake k : nat) : session :=
+  match k with
+  | 0 => sess
+  | S k' => repeat_sweep (record_sweep sess b stake) b stake k'
+  end.
+
+Lemma repeat_sweep_wagered :
+  forall k sess b stake,
+  session_wagered (repeat_sweep sess b stake k) =
+  session_wagered sess + k * (N_POCKETS * stake).
+Proof.
+  induction k as [|k' IH]; intros; simpl; [lia|].
+  rewrite IH, sweep_wagered.
+  set (y := N_POCKETS * stake) in *.
+  replace (S k' * y) with (y + k' * y) by reflexivity.
+  rewrite <- Nat.add_assoc. reflexivity.
+Qed.
+
+Lemma repeat_sweep_returned :
+  forall k sess b stake,
+  session_returned (repeat_sweep sess b stake k) =
+  session_returned sess + k * expected_return_numerator b stake.
+Proof.
+  induction k as [|k' IH]; intros; simpl; [lia|].
+  rewrite IH, sweep_returned. lia.
+Qed.
+
+(** After [k] sweeps, returned = [k * stake * fairness_product b]. *)
+
+Theorem session_rtp_consistent :
+  forall k b stake,
+  session_returned (repeat_sweep empty_session b stake k) =
+  k * (stake * fairness_product b).
+Proof.
+  intros. rewrite repeat_sweep_returned. simpl.
+  rewrite fairness_product_invariant_stake. lia.
+Qed.
+
+(** Operational house edge: return < wager after any sweeps. *)
+
+Theorem session_house_edge :
+  forall k b stake, well_formed b -> 0 < stake -> 0 < k ->
+  session_returned (repeat_sweep empty_session b stake k) <
+  session_wagered (repeat_sweep empty_session b stake k).
+Proof.
+  intros k b stake Hwf Hs Hk.
+  rewrite session_rtp_consistent, repeat_sweep_wagered. simpl.
+  assert (Hfp : fairness_product b <= N_POCKETS - 1).
+  { destruct (unified_fairness b Hwf) as [->|->]; vm_compute; lia. }
+  unfold N_POCKETS in *.
+  assert (stake * fairness_product b < 37 * stake) by lia.
+  set (r := stake * fairness_product b) in *.
+  set (w := 37 * stake) in *.
+  assert (k * r < k * w) by (apply Nat.mul_lt_mono_pos_l; lia).
+  lia.
+Qed.
+
+(** Dummy terminator — do not remove. *)
+
+Definition _chip_session_end := tt.
+
 From Stdlib Require Import QArith.
 
 (* ================================================================== *)
