@@ -2,20 +2,13 @@
 (*                                                                            *)
 (*              Roulette: Verified Fairness of Single-Zero Wheels             *)
 (*                                                                            *)
-(*     Proves correct mapping from RNG output to wheel position,              *)
-(*     deterministic payout computation for all standard bet types,           *)
-(*     and counting uniformity of the mod-37 mapping across the               *)
-(*     0-36 outcome space.                                                    *)
-(*                                                                            *)
-(*     Scope: discrete combinatorics over finite outcome sets.                *)
-(*     All "uniformity" results are equal-count statements, not               *)
-(*     probability measures.  No measure theory, probability monad,           *)
-(*     or random variable is used or required: the 37-pocket wheel            *)
-(*     is a deterministic finite structure whose fairness properties           *)
-(*     reduce to counting and integer arithmetic.  The physical               *)
-(*     wheel spin and RNG implementation are not modeled; the                 *)
-(*     VERIFIED_RNG module type specifies the source-range contract           *)
-(*     that any conforming implementation must satisfy.                       *)
+(*     Proves correct RNG-to-pocket mapping, coverage and payout              *)
+(*     for all 157 well-formed bets on both European and American             *)
+(*     wheels, the unified fairness product (coverage * (payout+1)            *)
+(*     = 36 for every standard bet), exact hit-count uniformity of            *)
+(*     mod-37 over arbitrary source ranges, rejection sampling                *)
+(*     correctness, La Partage / En Prison expected return, and               *)
+(*     the no-winning-system theorem for single bets and portfolios.          *)
 (*                                                                            *)
 (*     "The theory of probabilities is at bottom nothing but common           *)
 (*     sense reduced to calculus."                                            *)
@@ -935,9 +928,9 @@ Qed.
     one of them is zero (adjacent to 1, 2, 3). *)
 
 Definition table_adjacent_directed (a b : nat) : bool :=
-  (* Horizontal: same row, next column — differ by 3 *)
+  (* Same column, next row — differ by 3 *)
   ((1 <=? a) && (a <=? 33) && (b =? a + 3)) ||
-  (* Vertical: same column, next row — differ by 1 *)
+  (* Same row, next column — differ by 1 *)
   ((1 <=? a) && (a <=? 35) && (b =? a + 1) && negb (a mod 3 =? 0)) ||
   (* Zero adjacency *)
   ((a =? 0) && ((b =? 1) || (b =? 2) || (b =? 3))).
@@ -1297,12 +1290,113 @@ Proof.
 Qed.
 
 (* ================================================================== *)
+(** * Table orientation                                                 *)
+(* ================================================================== *)
+
+(** Machine-checked characterization of the table geometry.
+    Pockets 1-36 sit on a 12-row by 3-column grid.  Two nonzero
+    pockets are row neighbors when they share a row index and
+    column neighbors when they share a column index. *)
+
+(** Row index: [(n-1) / 3] for [n] in 1..36. *)
+
+Definition row_index (n : nat) : nat := (n - 1) / 3.
+
+(** Column index: [(n-1) mod 3] for [n] in 1..36. *)
+
+Definition col_index (n : nat) : nat := (n - 1) mod 3.
+
+(** Every nonzero adjacent pair either differs by 1 (row neighbor)
+    or by 3 (column neighbor). *)
+
+Lemma adjacent_classification_check :
+  all_pairs_below N_POCKETS (fun a b =>
+    negb (table_adjacent a b && (1 <=? a) && (1 <=? b)) ||
+    ((a + 1 =? b) || (b + 1 =? a) || (a + 3 =? b) || (b + 3 =? a))) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Theorem adjacent_classification :
+  forall a b, a < N_POCKETS -> b < N_POCKETS ->
+  1 <= a -> 1 <= b -> table_adjacent a b = true ->
+  (a + 1 = b \/ b + 1 = a) \/ (a + 3 = b \/ b + 3 = a).
+Proof.
+  intros a b Ha Hb H1a H1b Hadj.
+  pose proof (all_pairs_below_correct _ _ adjacent_classification_check a b Ha Hb) as H.
+  apply orb_true_iff in H as [Hn | Hok].
+  - apply negb_true_iff in Hn.
+    assert (table_adjacent a b && (1 <=? a) && (1 <=? b) = true).
+    { repeat (apply andb_true_iff; split);
+      try exact Hadj; apply Nat.leb_le; lia. }
+    congruence.
+  - repeat (apply orb_true_iff in Hok as [Hok | Hok]);
+    apply Nat.eqb_eq in Hok; [left; left | left; right | right; left | right; right]; lia.
+Qed.
+
+(** Row neighbors (differ by 1) share a row index. *)
+
+Lemma row_neighbor_same_row_check :
+  all_pairs_below N_POCKETS (fun a b =>
+    negb (table_adjacent a b && (1 <=? a) && (1 <=? b) &&
+          ((a + 1 =? b) || (b + 1 =? a))) ||
+    (row_index a =? row_index b)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Theorem row_neighbor_same_row :
+  forall a b, a < N_POCKETS -> b < N_POCKETS ->
+  1 <= a -> 1 <= b -> table_adjacent a b = true ->
+  (a + 1 = b \/ b + 1 = a) ->
+  row_index a = row_index b.
+Proof.
+  intros a b Ha Hb H1a H1b Hadj Hdiff.
+  pose proof (all_pairs_below_correct _ _ row_neighbor_same_row_check a b Ha Hb) as H.
+  apply orb_true_iff in H as [Hn | Hok].
+  - apply negb_true_iff in Hn.
+    assert (table_adjacent a b && (1 <=? a) && (1 <=? b) &&
+            ((a + 1 =? b) || (b + 1 =? a)) = true).
+    { repeat (apply andb_true_iff; split);
+      try exact Hadj; try (apply Nat.leb_le; lia).
+      apply orb_true_iff. destruct Hdiff as [H1|H1];
+      [left|right]; apply Nat.eqb_eq; lia. }
+    congruence.
+  - apply Nat.eqb_eq in Hok. exact Hok.
+Qed.
+
+(** Column neighbors (differ by 3) share a column index. *)
+
+Lemma col_neighbor_same_col_check :
+  all_pairs_below N_POCKETS (fun a b =>
+    negb (table_adjacent a b && (1 <=? a) && (1 <=? b) &&
+          ((a + 3 =? b) || (b + 3 =? a))) ||
+    (col_index a =? col_index b)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Theorem col_neighbor_same_col :
+  forall a b, a < N_POCKETS -> b < N_POCKETS ->
+  1 <= a -> 1 <= b -> table_adjacent a b = true ->
+  (a + 3 = b \/ b + 3 = a) ->
+  col_index a = col_index b.
+Proof.
+  intros a b Ha Hb H1a H1b Hadj Hdiff.
+  pose proof (all_pairs_below_correct _ _ col_neighbor_same_col_check a b Ha Hb) as H.
+  apply orb_true_iff in H as [Hn | Hok].
+  - apply negb_true_iff in Hn.
+    assert (table_adjacent a b && (1 <=? a) && (1 <=? b) &&
+            ((a + 3 =? b) || (b + 3 =? a)) = true).
+    { repeat (apply andb_true_iff; split);
+      try exact Hadj; try (apply Nat.leb_le; lia).
+      apply orb_true_iff. destruct Hdiff as [H1|H1];
+      [left|right]; apply Nat.eqb_eq; lia. }
+    congruence.
+  - apply Nat.eqb_eq in Hok. exact Hok.
+Qed.
+
+(* ================================================================== *)
 (** * Split edge count                                                  *)
 (* ================================================================== *)
 
 (** The European single-zero table has exactly 60 split edges:
-    33 horizontal (same row, adjacent columns),
-    24 vertical (same column, adjacent rows),
+    24 intra-row (same row, adjacent columns — differ by 1),
+    33 intra-column (same column, adjacent rows — differ by 3),
     and 3 zero adjacencies (0-1, 0-2, 0-3). *)
 
 (** Total number of ordered adjacent pairs with [a < b]. *)
@@ -1403,23 +1497,81 @@ Lemma canonical_corner_is_2x2_check :
      negb (a + 3 =? a + 4))) = true.
 Proof. vm_compute. reflexivity. Qed.
 
-(** Any valid 2x2 block on the grid can be written in canonical
-    anchor form.  For four distinct pockets forming a 2x2 block,
-    sorting them gives [{a, a+1, a+3, a+4}] where [a] is the
-    minimum.  Verified for all 22 valid anchors: the canonical
-    form covers every 2x2 block. *)
+(** For every valid corner anchor, the canonical block [{a, a+1,
+    a+3, a+4}] forms a 2x2 adjacency pattern on the table: the
+    row pairs [{a, a+1}] and [{a+3, a+4}] are adjacent, and the
+    column pairs [{a, a+3}] and [{a+1, a+4}] are adjacent. *)
 
-Lemma corner_canonical_covers_all_check :
+Lemma corner_is_2x2_check :
   all_below 33 (fun a =>
     negb (valid_corner_anchor a) ||
-    ((a + 1 =? a + 1) && (a + 3 =? a + 3) && (a + 4 =? a + 4))) = true.
+    (table_adjacent a (a + 1) &&
+     table_adjacent a (a + 3) &&
+     table_adjacent (a + 1) (a + 4) &&
+     table_adjacent (a + 3) (a + 4))) = true.
 Proof. vm_compute. reflexivity. Qed.
+
+(** Every valid corner anchor produces a 2x2 block on the table. *)
+
+Theorem corner_canonical_is_2x2 :
+  forall a, valid_corner_anchor a = true ->
+  table_adjacent a (a + 1) = true /\
+  table_adjacent a (a + 3) = true /\
+  table_adjacent (a + 1) (a + 4) = true /\
+  table_adjacent (a + 3) (a + 4) = true.
+Proof.
+  intros a Ha.
+  assert (Ha' : a < 33).
+  { unfold valid_corner_anchor in Ha.
+    apply andb_true_iff in Ha as [Ha1 _].
+    apply andb_true_iff in Ha1 as [_ Ha2].
+    apply Nat.leb_le in Ha2. lia. }
+  pose proof (all_below_correct _ _ corner_is_2x2_check a Ha') as H.
+  apply orb_true_iff in H as [Hn | Hok].
+  - apply negb_true_iff in Hn. congruence.
+  - repeat (apply andb_true_iff in Hok as [Hok ?]).
+    repeat split; assumption.
+Qed.
+
+(** Converse: every 2x2 block on the 12x3 grid produces a valid
+    corner anchor.  For rows [r] in 1..11 and columns [c] in 1..2,
+    the bottom-left pocket [(r-1)*3 + c] is a valid anchor and the
+    block [{a, a+1, a+3, a+4}] recovers the four grid positions. *)
+
+Lemma corner_from_grid_check :
+  all_pairs_below 13 (fun r c =>
+    negb ((1 <=? r) && (r <=? 11) && (1 <=? c) && (c <=? 2)) ||
+    valid_corner_anchor ((r - 1) * 3 + c)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Theorem corner_from_grid :
+  forall r c, 1 <= r -> r <= 11 -> 1 <= c -> c <= 2 ->
+  let a := (r - 1) * 3 + c in
+  valid_corner_anchor a = true /\
+  pos_to_pocket (Grid r c) = a /\
+  pos_to_pocket (Grid r (c + 1)) = a + 1 /\
+  pos_to_pocket (Grid (r + 1) c) = a + 3 /\
+  pos_to_pocket (Grid (r + 1) (c + 1)) = a + 4.
+Proof.
+  intros r c Hr1 Hr11 Hc1 Hc2. cbv zeta.
+  split.
+  - assert (Hr : r < 13) by lia.
+    assert (Hc : c < 13) by lia.
+    pose proof (all_pairs_below_correct _ _ corner_from_grid_check r c Hr Hc) as H.
+    apply orb_true_iff in H as [Hn | Hok].
+    + exfalso. apply negb_true_iff in Hn.
+      assert ((1 <=? r) && (r <=? 11) && (1 <=? c) && (c <=? 2) = true).
+      { repeat (apply andb_true_iff; split); apply Nat.leb_le; lia. }
+      congruence.
+    + exact Hok.
+  - simpl. repeat split; lia.
+Qed.
 
 (** Corner [bet_wins] is permutation-invariant: any reordering of
     the four pocket arguments yields the same boolean for every
     outcome [n], because [(n =? a) || (n =? b) || (n =? c) || (n =? d)]
     computes set membership in [{a,b,c,d}].  Combined with
-    [corner_canonical_covers_all_check], this means any valid
+    [corner_canonical_is_2x2] and [corner_from_grid], any valid
     2x2 block can be analyzed via the canonical anchor form
     without loss of generality. *)
 
@@ -2387,6 +2539,117 @@ Proof.
 Qed.
 
 (* ================================================================== *)
+(** * Coverage classification                                           *)
+(* ================================================================== *)
+
+(** Expected coverage for each bet type.  Straight covers 1,
+    Split 2, Street/Trio 3, Corner/Basket 4, FiveNumber 5,
+    SixLine 6, Column/Dozen 12, even-money 18. *)
+
+Definition expected_coverage (b : bet_type) : nat :=
+  match b with
+  | Straight _ => 1
+  | Split _ _ => 2
+  | Street _ | Trio _ => 3
+  | Corner _ _ _ _ | Basket => 4
+  | FiveNumber => 5
+  | SixLine _ _ => 6
+  | Column _ | Dozen _ => 12
+  | RedBet | BlackBet | OddBet | EvenBet | LowBet | HighBet => 18
+  end.
+
+(** For every well-formed bet, [count_wins] equals [expected_coverage].
+    Corner and SixLine coverage is derived from the fairness product
+    (which was established computationally) to avoid symbolic [vm_compute]. *)
+
+(** Computational verification that every well-formed bet type
+    has [count_wins = expected_coverage].  The check iterates all
+    concrete parameter values: 0..36 for Straight, all 37x37
+    adjacent pairs for Split, 1..12 for Street, all 22 corner
+    anchors, 1..11 for SixLine, variants 1-2 for Trio, and
+    columns/dozens 1-3. *)
+
+Lemma coverage_straight_check :
+  all_below N_POCKETS (fun k => count_wins (Straight k) =? 1) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma coverage_split_check :
+  all_pairs_below N_POCKETS (fun a b =>
+    negb (table_adjacent a b) || (count_wins (Split a b) =? 2)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma coverage_corner_check :
+  all_below 33 (fun a =>
+    negb (valid_corner_anchor a) ||
+    (count_wins (Corner a (a+1) (a+3) (a+4)) =? 4)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma coverage_corner :
+  forall a, 1 <= a -> a <= 32 -> a mod 3 <> 0 ->
+  count_wins (Corner a (a+1) (a+3) (a+4)) = 4.
+Proof.
+  intros a H1 H32 Hmod.
+  apply Nat.eqb_eq.
+  assert (Ha : a < 33) by lia.
+  pose proof (all_below_correct _ _ coverage_corner_check a Ha) as H.
+  apply orb_true_iff in H as [Hn | Hok].
+  - exfalso. apply negb_true_iff in Hn.
+    pose proof (corner_anchor_exhaustive a H1 H32 Hmod). congruence.
+  - exact Hok.
+Qed.
+
+Lemma coverage_sixline_check :
+  all_below 11 (fun r =>
+    count_wins (SixLine (S r) (S r + 1)) =? 6) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma coverage_sixline :
+  forall r, 1 <= r -> r <= 11 ->
+  count_wins (SixLine r (r + 1)) = 6.
+Proof.
+  intros r H1 H11. apply Nat.eqb_eq.
+  assert (Hr : r - 1 < 11) by lia.
+  replace r with (S (r - 1)) by lia.
+  exact (all_below_correct _ _ coverage_sixline_check (r - 1) Hr).
+Qed.
+
+Theorem coverage_classification :
+  forall b, well_formed b -> count_wins b = expected_coverage b.
+Proof.
+  intros [] Hwf; simpl well_formed in Hwf; simpl expected_coverage.
+  - exact (straight_covers_1_at _ Hwf).
+  - destruct Hwf as [Ha [Hb Hadj]].
+    apply split_covers_2; [exact Ha | exact Hb |].
+    intro Heq; subst; rewrite table_adjacent_irrefl in Hadj;
+    [discriminate | exact Ha].
+  - destruct Hwf as [H1 H12]. exact (street_covers_3_at _ H1 H12).
+  - destruct Hwf as [H1 [H32 [Hmod [-> [-> ->]]]]].
+    exact (coverage_corner _ H1 H32 Hmod).
+  - destruct Hwf as [H1 [H12a [H2 [H12b [Hr|Hr]]]]]; subst.
+    + exact (coverage_sixline _ H1 ltac:(lia)).
+    + assert (Hcw : count_wins (SixLine (row2+1) row2) =
+                     count_wins (SixLine row2 (row2+1))).
+      { unfold count_wins. f_equal. apply filter_ext. intro.
+        apply sixline_bet_wins_sym. }
+      rewrite Hcw. exact (coverage_sixline _ H2 ltac:(lia)).
+  - destruct Hwf as [Hv|Hv]; subst; vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+  - contradiction.
+  - destruct Hwf as [H1 H3].
+    destruct col; [lia|]; destruct col; [| destruct col; [| destruct col; [| lia]]];
+    vm_compute; reflexivity.
+  - destruct Hwf as [H1 H3].
+    destruct doz; [lia|]; destruct doz; [| destruct doz; [| destruct doz; [| lia]]];
+    vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+  - vm_compute; reflexivity.
+Qed.
+
+(* ================================================================== *)
 (** * Well-formed bet enumeration                                       *)
 (* ================================================================== *)
 
@@ -2711,6 +2974,46 @@ Local Lemma fold_add_cons (x : nat) (l : list nat) :
   fold_left Nat.add (x :: l) 0 = x + fold_left Nat.add l 0.
 Proof. change (fold_left Nat.add l (0 + x) = x + fold_left Nat.add l 0).
   rewrite fold_left_add_acc. lia. Qed.
+
+(** Pointwise sum distributes over [fold_left Nat.add]. *)
+
+Local Lemma fold_add_pointwise {A : Type} (f g : A -> nat) (l : list A) :
+  fold_left Nat.add (map (fun x => f x + g x) l) 0 =
+  fold_left Nat.add (map f l) 0 + fold_left Nat.add (map g l) 0.
+Proof.
+  induction l as [|a l' IH]; [reflexivity|].
+  cbn [map]. rewrite !fold_add_cons, IH. lia.
+Qed.
+
+(** Adding a bet to a portfolio adds its return to each outcome. *)
+
+Local Lemma portfolio_return_cons b s p' n :
+  portfolio_return ((b, s) :: p') n = net_return b s n + portfolio_return p' n.
+Proof.
+  unfold portfolio_return at 1. cbn [map fst snd]. apply fold_add_cons.
+Qed.
+
+(** Portfolio linearity: the sum of returns across all outcomes
+    equals the sum of per-bet expected returns. *)
+
+Theorem portfolio_linearity :
+  forall p, portfolio_expected p = portfolio_sum_individual p.
+Proof.
+  induction p as [|[b s] p' IH].
+  - reflexivity.
+  - assert (HE : portfolio_expected ((b, s) :: p') =
+                 expected_return_numerator b s + portfolio_expected p').
+    { unfold portfolio_expected at 1.
+      assert (Hmap : map (portfolio_return ((b, s) :: p')) (seq 0 N_POCKETS) =
+                     map (fun n => net_return b s n + portfolio_return p' n) (seq 0 N_POCKETS)).
+      { apply map_ext. exact (portfolio_return_cons b s p'). }
+      rewrite Hmap, fold_add_pointwise. reflexivity. }
+    assert (HS : portfolio_sum_individual ((b, s) :: p') =
+                 expected_return_numerator b s + portfolio_sum_individual p').
+    { unfold portfolio_sum_individual at 1.
+      cbn [map fst snd]. rewrite fold_add_cons. reflexivity. }
+    rewrite HE, HS, IH. reflexivity.
+Qed.
 
 (** No non-empty portfolio of well-formed positive-stake bets
     achieves non-negative expected return. *)
@@ -3397,114 +3700,84 @@ Proof.
 Qed.
 
 (* ================================================================== *)
-(** * Verified RNG module type                                          *)
+(** * Verified RNG pipeline                                             *)
 (* ================================================================== *)
 
-(** The module type [VERIFIED_RNG] specifies the contract for an
-    RNG source: it must declare a source range and prove it covers
-    all 37 pockets.  The functor [RNG_Uniformity] then derives the
-    full uniformity and fairness guarantee for any conforming
-    implementation, culminating in [rng_no_winning_system]: no
-    well-formed bet achieves non-negative expected return.
+(** Full verification chain for any RNG source with range [>= 37]:
+    hit-count bounds, rejection sampling uniformity, waste bound,
+    and the no-winning-system guarantee.  Parameterized as a Section
+    so that closing abstracts the source range into a universally
+    quantified argument — no module-type axiom needed. *)
 
-    This connects the RNG pipeline to the bet-level fairness
-    theorems: [pipeline_end_to_end] proves the properties for an
-    arbitrary [N]; the module packages them for a specific source
-    so downstream code can import the guarantees without reproving
-    the [N_POCKETS <= source_range] obligation at each use site. *)
+Section RNG_Pipeline.
 
-Module Type VERIFIED_RNG.
-  (** The RNG produces values in [[0, source_range)]. *)
-  Parameter source_range : nat.
-
-  (** The source range must cover at least one full cycle of
-      37 pockets.  Without this, some pockets get zero hits. *)
-  Axiom source_range_sufficient : N_POCKETS <= source_range.
-End VERIFIED_RNG.
-
-(** Given any conforming RNG, we derive the full verification
-    chain: hit-count bounds, rejection sampling uniformity,
-    and the no-winning-system guarantee for all well-formed bets. *)
-
-Module RNG_Uniformity (R : VERIFIED_RNG).
+  Variable source_range : nat.
+  Hypothesis source_range_sufficient : N_POCKETS <= source_range.
 
   (** Every pocket's hit count is within 1 of the ideal. *)
-  Theorem pocket_deviation :
+  Theorem rng_pocket_deviation :
     forall p, p < N_POCKETS ->
-    R.source_range / N_POCKETS <= count_hits p R.source_range /\
-    count_hits p R.source_range <= R.source_range / N_POCKETS + 1.
-  Proof. exact (fun p Hp => mod_bias_bound p R.source_range Hp R.source_range_sufficient). Qed.
+    source_range / N_POCKETS <= count_hits p source_range /\
+    count_hits p source_range <= source_range / N_POCKETS + 1.
+  Proof. exact (fun p Hp => mod_bias_bound p source_range Hp source_range_sufficient). Qed.
 
   (** No two pockets differ by more than 1 hit. *)
-  Theorem pairwise_deviation :
+  Theorem rng_pairwise_deviation :
     forall p1 p2, p1 < N_POCKETS -> p2 < N_POCKETS ->
-    count_hits p1 R.source_range <= count_hits p2 R.source_range + 1.
-  Proof. exact (fun p1 p2 H1 H2 => rng_max_deviation p1 p2 R.source_range H1 H2). Qed.
+    count_hits p1 source_range <= count_hits p2 source_range + 1.
+  Proof. exact (fun p1 p2 H1 H2 => rng_max_deviation p1 p2 source_range H1 H2). Qed.
 
   (** Rejection sampling over [[0, source_range)] produces
       equal hit counts across all pockets. *)
-  Definition accepted_range := rejection_bound R.source_range.
 
-  Theorem accepted_range_uniform :
+  Definition rng_accepted_range := rejection_bound source_range.
+
+  Theorem rng_accepted_uniform :
     forall p, p < N_POCKETS ->
-    count_hits p accepted_range = R.source_range / N_POCKETS.
+    count_hits p rng_accepted_range = source_range / N_POCKETS.
   Proof.
-    intros p Hp. unfold accepted_range.
-    exact (rejection_sampling_uniform p R.source_range Hp).
+    intros p Hp. unfold rng_accepted_range.
+    exact (rejection_sampling_uniform p source_range Hp).
   Qed.
 
-  Theorem accepted_range_positive : 0 < accepted_range.
+  Theorem rng_accepted_positive : 0 < rng_accepted_range.
   Proof.
-    unfold accepted_range. exact (rejection_bound_pos R.source_range R.source_range_sufficient).
+    unfold rng_accepted_range.
+    exact (rejection_bound_pos source_range source_range_sufficient).
   Qed.
 
-  Theorem waste_bounded : R.source_range - accepted_range < N_POCKETS.
+  Theorem rng_waste_bounded : source_range - rng_accepted_range < N_POCKETS.
   Proof.
-    unfold accepted_range. exact (rejection_waste_bound R.source_range).
+    unfold rng_accepted_range. exact (rejection_waste_bound source_range).
   Qed.
 
-  (** The culminating guarantee: for this RNG source, rejection
-      sampling yields exact uniformity, the acceptance rate is
-      positive, and no well-formed bet achieves non-negative edge.
-      This is [pipeline_end_to_end] instantiated for [source_range]. *)
+  (** Full pipeline: exact uniformity, positive acceptance, and
+      no well-formed bet achieves non-negative edge. *)
 
   Theorem rng_pipeline :
-    is_uniform N_POCKETS accepted_range /\
-    0 < accepted_range /\
+    is_uniform N_POCKETS rng_accepted_range /\
+    0 < rng_accepted_range /\
     (forall b s, well_formed b -> 0 < s ->
      expected_return_numerator b s < N_POCKETS * s).
   Proof.
-    pose proof (pipeline_end_to_end R.source_range R.source_range_sufficient)
-      as [Hu [Hp Hns]].
-    repeat split; [exact Hu | exact Hp | exact Hns].
+    exact (pipeline_end_to_end source_range source_range_sufficient).
   Qed.
 
-End RNG_Uniformity.
+End RNG_Pipeline.
 
-(** Two concrete instantiations demonstrating the module in use.
-    Any RNG with [source_range >= 37] qualifies. *)
+(** Concrete instantiations for common source sizes. *)
 
 (** 8-bit source (256 values): rejection discards 34 values,
     acceptance rate 222/256 ~ 86.7%.  Each pocket gets exactly
     6 hits in the accepted range. *)
 
-Module RNG_256 <: VERIFIED_RNG.
-  Definition source_range := 256.
-  Lemma source_range_sufficient : N_POCKETS <= source_range.
-  Proof. unfold N_POCKETS, source_range. lia. Qed.
-End RNG_256.
-
-Module RNG_256_Props := RNG_Uniformity RNG_256.
-
-(** The 8-bit RNG accepted range is 222 (= 6 * 37). *)
-
-Lemma rng_256_accepted : RNG_256_Props.accepted_range = 222.
+Lemma rng_256_accepted : rng_accepted_range 256 = 222.
 Proof. vm_compute. reflexivity. Qed.
 
 (** Each pocket receives exactly 6 hits in the 8-bit accepted range. *)
 
 Lemma rng_256_hits : forall p, p < N_POCKETS ->
-  count_hits p RNG_256_Props.accepted_range = 6.
+  count_hits p (rng_accepted_range 256) = 6.
 Proof.
   intros p Hp. rewrite rng_256_accepted.
   exact (uniform_multiple 6 p Hp).
@@ -3513,17 +3786,7 @@ Qed.
 (** 1000-value source: rejection discards 1 value,
     acceptance rate 999/1000. *)
 
-Module RNG_1000 <: VERIFIED_RNG.
-  Definition source_range := 1000.
-  Lemma source_range_sufficient : N_POCKETS <= source_range.
-  Proof. unfold N_POCKETS, source_range. lia. Qed.
-End RNG_1000.
-
-Module RNG_1000_Props := RNG_Uniformity RNG_1000.
-
-(** The 1000-value RNG accepted range is 999 (= 27 * 37). *)
-
-Lemma rng_1000_accepted : RNG_1000_Props.accepted_range = 999.
+Lemma rng_1000_accepted : rng_accepted_range 1000 = 999.
 Proof. vm_compute. reflexivity. Qed.
 
 (* ================================================================== *)
@@ -3872,14 +4135,12 @@ Print Assumptions rejection_sampling_uniform.
 Print Assumptions fairness_product_invariant_stake.
 Print Assumptions well_formed_decidable.
 
-(** Module-level audit: [RNG_1000_Props.rng_pipeline] depends on
-    [RNG_1000.source_range_sufficient], which is the module's own
-    proof obligation — not an unproven axiom.  Consumers of the
-    module verify this obligation at instantiation time.  The
-    [VERIFIED_RNG] module type's [Axiom] is a parameter, not a
-    gap in the proof. *)
+(** Section-level audit: [rng_pipeline] is parameterized over
+    [source_range] and a proof of [N_POCKETS <= source_range].
+    No axioms are introduced; the hypothesis becomes a regular
+    function argument after the Section closes. *)
 
-Print Assumptions RNG_1000_Props.rng_pipeline.
+Print Assumptions rng_pipeline.
 
 (* ================================================================== *)
 (** * Verified simulator                                                *)

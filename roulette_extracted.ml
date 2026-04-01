@@ -16,6 +16,11 @@ type nat =
 type ('a, 'b) prod =
 | Pair of 'a * 'b
 
+(** val fst : ('a1, 'a2) prod -> 'a1 **)
+
+let fst = function
+| Pair (x, _) -> x
+
 (** val snd : ('a1, 'a2) prod -> 'a2 **)
 
 let snd = function
@@ -24,6 +29,12 @@ let snd = function
 type 'a list =
 | Nil
 | Cons of 'a * 'a list
+
+(** val length : 'a1 list -> nat **)
+
+let rec length = function
+| Nil -> O
+| Cons (_, l') -> S (length l')
 
 (** val add : nat -> nat -> nat **)
 
@@ -86,6 +97,11 @@ module Nat =
                | O -> False
                | S m' -> leb n' m')
 
+  (** val ltb : nat -> nat -> bool **)
+
+  let ltb n m =
+    leb (S n) m
+
   (** val even : nat -> bool **)
 
   let rec even = function
@@ -108,6 +124,12 @@ module Nat =
       (match u with
        | O -> divmod x' y (S q) y
        | S u' -> divmod x' y q u')
+
+  (** val div : nat -> nat -> nat **)
+
+  let div x y = match y with
+  | O -> y
+  | S y' -> fst (divmod x y' O y')
 
   (** val modulo : nat -> nat -> nat **)
 
@@ -145,6 +167,15 @@ let rec fold_left f l a0 =
   match l with
   | Nil -> a0
   | Cons (b, l0) -> fold_left f l0 (f a0 b)
+
+(** val filter : ('a1 -> bool) -> 'a1 list -> 'a1 list **)
+
+let rec filter f = function
+| Nil -> Nil
+| Cons (x, l0) ->
+  (match f x with
+   | True -> Cons (x, (filter f l0))
+   | False -> filter f l0)
 
 (** val n_POCKETS : nat **)
 
@@ -201,6 +232,7 @@ type bet_type =
 | SixLine of nat * nat
 | Trio of nat
 | Basket
+| FiveNumber
 | Column of nat
 | Dozen of nat
 | RedBet
@@ -320,6 +352,20 @@ let bet_wins b n =
            | False -> Nat.eqb n (S (S O)) with
      | True -> True
      | False -> Nat.eqb n (S (S (S O))))
+  | FiveNumber ->
+    (match match match match Nat.eqb n O with
+                       | True -> True
+                       | False ->
+                         Nat.eqb n (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                           (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                           (S (S (S (S (S (S
+                           O))))))))))))))))))))))))))))))))))))) with
+                 | True -> True
+                 | False -> Nat.eqb n (S O) with
+           | True -> True
+           | False -> Nat.eqb n (S (S O)) with
+     | True -> True
+     | False -> Nat.eqb n (S (S (S O))))
   | Column col -> in_column n col
   | Dozen doz -> in_dozen n doz
   | RedBet -> is_red n
@@ -370,6 +416,7 @@ let payout_ratio = function
 | SixLine (_, _) -> S (S (S (S (S O))))
 | Trio _ -> S (S (S (S (S (S (S (S (S (S (S O))))))))))
 | Basket -> S (S (S (S (S (S O)))))
+| FiveNumber -> S (S (S (S (S (S O)))))
 | Column _ -> S (S O)
 | Dozen _ -> S (S O)
 | _ -> S O
@@ -381,7 +428,133 @@ let net_return b stake outcome =
   | True -> add stake (mul stake (payout_ratio b))
   | False -> O
 
+(** val count_wins : bet_type -> nat **)
+
+let count_wins b =
+  length (filter (bet_wins b) (seq O n_POCKETS))
+
+(** val fairness_product : bet_type -> nat **)
+
+let fairness_product b =
+  mul (count_wins b) (add (payout_ratio b) (S O))
+
+(** val table_adjacent_directed : nat -> nat -> bool **)
+
+let table_adjacent_directed a b =
+  match match match match Nat.leb (S O) a with
+                    | True ->
+                      Nat.leb a (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                        (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                        O)))))))))))))))))))))))))))))))))
+                    | False -> False with
+              | True -> Nat.eqb b (add a (S (S (S O))))
+              | False -> False with
+        | True -> True
+        | False ->
+          (match match match Nat.leb (S O) a with
+                       | True ->
+                         Nat.leb a (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                           (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                           (S (S (S (S O)))))))))))))))))))))))))))))))))))
+                       | False -> False with
+                 | True -> Nat.eqb b (add a (S O))
+                 | False -> False with
+           | True -> negb (Nat.eqb (Nat.modulo a (S (S (S O)))) O)
+           | False -> False) with
+  | True -> True
+  | False ->
+    (match Nat.eqb a O with
+     | True ->
+       (match match Nat.eqb b (S O) with
+              | True -> True
+              | False -> Nat.eqb b (S (S O)) with
+        | True -> True
+        | False -> Nat.eqb b (S (S (S O))))
+     | False -> False)
+
+(** val table_adjacent : nat -> nat -> bool **)
+
+let table_adjacent a b =
+  match table_adjacent_directed a b with
+  | True -> True
+  | False -> table_adjacent_directed b a
+
+(** val well_formed_dec : bet_type -> bool **)
+
+let well_formed_dec = function
+| Straight k -> Nat.ltb k n_POCKETS
+| Split (a, b0) ->
+  (match match Nat.ltb a n_POCKETS with
+         | True -> Nat.ltb b0 n_POCKETS
+         | False -> False with
+   | True -> table_adjacent a b0
+   | False -> False)
+| Street row ->
+  (match Nat.leb (S O) row with
+   | True -> Nat.leb row (S (S (S (S (S (S (S (S (S (S (S (S O))))))))))))
+   | False -> False)
+| Corner (a, b0, c, d) ->
+  (match match match match match Nat.leb (S O) a with
+                           | True ->
+                             Nat.leb a (S (S (S (S (S (S (S (S (S (S (S (S (S
+                               (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                               (S (S (S (S O))))))))))))))))))))))))))))))))
+                           | False -> False with
+                     | True -> negb (Nat.eqb (Nat.modulo a (S (S (S O)))) O)
+                     | False -> False with
+               | True -> Nat.eqb b0 (add a (S O))
+               | False -> False with
+         | True -> Nat.eqb c (add a (S (S (S O))))
+         | False -> False with
+   | True -> Nat.eqb d (add a (S (S (S (S O)))))
+   | False -> False)
+| SixLine (r1, r2) ->
+  (match match match match Nat.leb (S O) r1 with
+                     | True ->
+                       Nat.leb r1 (S (S (S (S (S (S (S (S (S (S (S (S
+                         O))))))))))))
+                     | False -> False with
+               | True -> Nat.leb (S O) r2
+               | False -> False with
+         | True ->
+           Nat.leb r2 (S (S (S (S (S (S (S (S (S (S (S (S O))))))))))))
+         | False -> False with
+   | True ->
+     (match Nat.eqb r2 (add r1 (S O)) with
+      | True -> True
+      | False -> Nat.eqb r1 (add r2 (S O)))
+   | False -> False)
+| Trio v ->
+  (match Nat.eqb v (S O) with
+   | True -> True
+   | False -> Nat.eqb v (S (S O)))
+| FiveNumber -> False
+| Column col ->
+  (match Nat.leb (S O) col with
+   | True -> Nat.leb col (S (S (S O)))
+   | False -> False)
+| Dozen doz ->
+  (match Nat.leb (S O) doz with
+   | True -> Nat.leb doz (S (S (S O)))
+   | False -> False)
+| _ -> True
+
 (** val expected_return_numerator : bet_type -> nat -> nat **)
 
 let expected_return_numerator b stake =
   fold_left Nat.add (map (net_return b stake) (seq O n_POCKETS)) O
+
+(** val rejection_bound : nat -> nat **)
+
+let rejection_bound n =
+  mul n_POCKETS (Nat.div n n_POCKETS)
+
+(** val simulate_spin : bet_type -> nat -> nat -> nat **)
+
+let simulate_spin b stake raw =
+  net_return b stake (rng_to_pocket raw)
+
+(** val simulate_session : bet_type -> nat -> nat list -> nat **)
+
+let simulate_session b stake raws =
+  fold_left Nat.add (map (simulate_spin b stake) raws) O

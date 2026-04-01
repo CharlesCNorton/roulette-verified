@@ -12,11 +12,15 @@ type nat =
 type ('a, 'b) prod =
 | Pair of 'a * 'b
 
+val fst : ('a1, 'a2) prod -> 'a1
+
 val snd : ('a1, 'a2) prod -> 'a2
 
 type 'a list =
 | Nil
 | Cons of 'a * 'a list
+
+val length : 'a1 list -> nat
 
 val add : nat -> nat -> nat
 
@@ -34,11 +38,15 @@ module Nat :
 
   val leb : nat -> nat -> bool
 
+  val ltb : nat -> nat -> bool
+
   val even : nat -> bool
 
   val odd : nat -> bool
 
   val divmod : nat -> nat -> nat -> nat -> (nat, nat) prod
+
+  val div : nat -> nat -> nat
 
   val modulo : nat -> nat -> nat
  end
@@ -50,6 +58,8 @@ val seq : nat -> nat -> nat list
 val nth : nat -> 'a1 list -> 'a1 -> 'a1
 
 val fold_left : ('a1 -> 'a2 -> 'a1) -> 'a2 list -> 'a1 -> 'a1
+
+val filter : ('a1 -> bool) -> 'a1 list -> 'a1 list
 
 val n_POCKETS : nat
 
@@ -76,6 +86,7 @@ type bet_type =
 | SixLine of nat * nat
 | Trio of nat
 | Basket
+| FiveNumber
 | Column of nat
 | Dozen of nat
 | RedBet
@@ -97,4 +108,20 @@ val payout_ratio : bet_type -> nat
 
 val net_return : bet_type -> nat -> nat -> nat
 
+val count_wins : bet_type -> nat
+
+val fairness_product : bet_type -> nat
+
+val table_adjacent_directed : nat -> nat -> bool
+
+val table_adjacent : nat -> nat -> bool
+
+val well_formed_dec : bet_type -> bool
+
 val expected_return_numerator : bet_type -> nat -> nat
+
+val rejection_bound : nat -> nat
+
+val simulate_spin : bet_type -> nat -> nat -> nat
+
+val simulate_session : bet_type -> nat -> nat list -> nat
