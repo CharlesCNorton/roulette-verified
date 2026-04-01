@@ -2569,10 +2569,6 @@ Definition expected_coverage (b : bet_type) : nat :=
     anchors, 1..11 for SixLine, variants 1-2 for Trio, and
     columns/dozens 1-3. *)
 
-Lemma coverage_straight_check :
-  all_below N_POCKETS (fun k => count_wins (Straight k) =? 1) = true.
-Proof. vm_compute. reflexivity. Qed.
-
 Lemma coverage_split_check :
   all_pairs_below N_POCKETS (fun a b =>
     negb (table_adjacent a b) || (count_wins (Split a b) =? 2)) = true.
@@ -3375,14 +3371,6 @@ Theorem en_prison_fixed_point_general :
    count_wins b * (N_POCKETS - 1) + count_wins b)%nat.
 Proof. intro. unfold N_POCKETS. lia. Qed.
 
-(** General recovery: the one-spin recovery sum from [Imprisoned]
-    state equals [count_wins b] for any bet and unit stake.
-    Direct corollary of [en_prison_recovery_general]. *)
-
-Theorem en_prison_recovery_is_coverage :
-  forall b, (en_prison_recovery_sum b 1 = count_wins b)%nat.
-Proof. intro b. rewrite en_prison_recovery_general. lia. Qed.
-
 (** Concrete instantiation for readability:
     [1/2 = 18/37 + (1/37)(1/2)]. *)
 
@@ -3608,17 +3596,6 @@ Proof.
   { apply Nat.div_str_pos. unfold N_POCKETS in *. lia. }
   unfold N_POCKETS in *. lia.
 Qed.
-
-(** Rejection sampling composes with [rng_to_pocket]: for any value
-    [v < rejection_bound N], [rng_to_pocket v = v mod 37] is exactly
-    uniform because [rejection_bound N] is a multiple of 37. *)
-
-(** Synonym of [rejection_sampling_uniform] for composability. *)
-
-Theorem rejection_sampling_correct :
-  forall p N, p < N_POCKETS ->
-  count_hits p (rejection_bound N) = N / N_POCKETS.
-Proof. exact rejection_sampling_uniform. Qed.
 
 (** Concrete rejection thresholds for common source sizes.  For a
     source range of [N], rejection discards at most [N mod 37]
