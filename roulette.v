@@ -3044,6 +3044,27 @@ Proof.
       lia.
 Qed.
 
+(** Total stake in a portfolio. *)
+
+Definition total_stake (p : portfolio) : nat :=
+  fold_left Nat.add (map (fun bs : bet_type * nat => snd bs) p) 0.
+
+(** End-to-end: for any non-empty portfolio of well-formed
+    positive-stake bets, the sum of returns across all outcomes
+    is strictly less than [N_POCKETS] times the total stake.
+    Composes [portfolio_linearity] with [portfolio_no_winning_system]. *)
+
+Theorem portfolio_expected_lt :
+  forall p,
+  p <> [] ->
+  (forall b s, In (b, s) p -> well_formed b /\ 0 < s) ->
+  portfolio_expected p < N_POCKETS * total_stake p.
+Proof.
+  intros p Hne Hall.
+  rewrite portfolio_linearity.
+  exact (portfolio_no_winning_system p Hne Hall).
+Qed.
+
 From Stdlib Require Import QArith.
 
 (* ================================================================== *)
@@ -3683,6 +3704,20 @@ Proof.
       nia.
 Qed.
 
+(** Waste fraction bound: for any source [N >= N_POCKETS], the
+    number of rejected values times [N] is strictly less than
+    [N_POCKETS * N].  Cross-multiplied, this says the rejection
+    rate is below [N_POCKETS / N], which vanishes as [N] grows. *)
+
+Theorem rejection_waste_fraction :
+  forall N, N_POCKETS <= N ->
+  N * (N - rejection_bound N) < N * N_POCKETS.
+Proof.
+  intros N HN.
+  pose proof (rejection_waste_bound N).
+  assert (Hrb := rejection_bound_le N). nia.
+Qed.
+
 (** End-to-end pipeline guarantee: for any RNG source with range
     >= 37, rejection sampling + mod-37 mapping produces an exactly
     uniform pocket distribution, every well-formed bet has expected
@@ -3858,55 +3893,93 @@ Lemma pocket_37_loses_even_money :
   bet_wins HighBet 37 = false.
 Proof. repeat split; vm_compute; reflexivity. Qed.
 
-(** Pocket 37 loses every well-formed European bet. *)
+(** Every well-formed bet loses on every out-of-range pocket. *)
+
+Theorem well_formed_out_of_range :
+  forall b n, well_formed b -> N_POCKETS <= n -> bet_wins b n = false.
+Proof.
+  intros b n Hwf Hn. destruct b; simpl well_formed in Hwf.
+  - (* Straight *) change (bet_wins (Straight _) n) with (n =? n0).
+    apply Nat.eqb_neq. unfold N_POCKETS in *. lia.
+  - (* Split *) destruct Hwf as [Ha [Hb _]].
+    change (bet_wins (Split _ _) n) with ((n =? a) || (n =? b)).
+    apply orb_false_iff; split; apply Nat.eqb_neq; unfold N_POCKETS in *; lia.
+  - (* Street *) destruct Hwf as [H1 H12].
+    change (bet_wins (Street _) n) with (in_street n row). unfold in_street.
+    replace (n <=? (row - 1) * 3 + 1 + 2) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
+    rewrite andb_false_r. reflexivity.
+  - (* Corner *) destruct Hwf as [H1 [H32 [_ [-> [-> ->]]]]].
+    change (bet_wins (Corner _ _ _ _) n)
+      with ((n =? a) || (n =? a+1) || (n =? a+3) || (n =? a+4)).
+    repeat (apply orb_false_iff; split); apply Nat.eqb_neq;
+    unfold N_POCKETS in *; lia.
+  - (* SixLine *) destruct Hwf as [H1 [H12a [H2 [H12b _]]]].
+    change (bet_wins (SixLine _ _) n)
+      with (in_street n row1 || in_street n row2).
+    apply orb_false_iff; split; unfold in_street;
+    (replace (n <=? _) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia);
+    rewrite andb_false_r; reflexivity).
+  - (* Trio *) destruct Hwf as [Hv|Hv]; subst;
+    [ change (bet_wins (Trio 1) n) with ((n =? 0) || (n =? 1) || (n =? 2))
+    | change (bet_wins (Trio 2) n) with ((n =? 0) || (n =? 2) || (n =? 3)) ];
+    repeat (apply orb_false_iff; split); apply Nat.eqb_neq;
+    unfold N_POCKETS in *; lia.
+  - (* Basket *)
+    change (bet_wins Basket n)
+      with ((n =? 0) || (n =? 1) || (n =? 2) || (n =? 3)).
+    repeat (apply orb_false_iff; split); apply Nat.eqb_neq;
+    unfold N_POCKETS in *; lia.
+  - (* FiveNumber *) contradiction.
+  - (* Column *) destruct Hwf as [H1 H3].
+    change (bet_wins (Column _) n) with (in_column n col). unfold in_column.
+    replace (n <=? 36) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
+    rewrite !andb_false_r. reflexivity.
+  - (* Dozen *) destruct Hwf as [H1 H3].
+    change (bet_wins (Dozen _) n) with (in_dozen n doz). unfold in_dozen.
+    destruct doz; [lia|]; destruct doz; [| destruct doz; [| destruct doz; [| lia]]];
+    (replace (n <=? _) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia);
+    rewrite ?andb_false_r; reflexivity).
+  - (* RedBet *)
+    change (bet_wins RedBet n) with (is_red n). unfold is_red, pocket_color.
+    rewrite nth_overflow by (rewrite color_table_length; unfold N_POCKETS in *; lia).
+    reflexivity.
+  - (* BlackBet *)
+    change (bet_wins BlackBet n) with (is_black n). unfold is_black, pocket_color.
+    rewrite nth_overflow by (rewrite color_table_length; unfold N_POCKETS in *; lia).
+    reflexivity.
+  - (* OddBet *)
+    change (bet_wins OddBet n) with ((1 <=? n) && (n <=? 36) && Nat.odd n).
+    replace (n <=? 36) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
+    rewrite !andb_false_r. reflexivity.
+  - (* EvenBet *)
+    change (bet_wins EvenBet n) with ((1 <=? n) && (n <=? 36) && Nat.even n).
+    replace (n <=? 36) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
+    rewrite !andb_false_r. reflexivity.
+  - (* LowBet *)
+    change (bet_wins LowBet n) with ((1 <=? n) && (n <=? 18)).
+    replace (n <=? 18) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
+    rewrite andb_false_r. reflexivity.
+  - (* HighBet *)
+    change (bet_wins HighBet n) with ((19 <=? n) && (n <=? 36)).
+    replace (n <=? 36) with false
+      by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia).
+    rewrite andb_false_r. reflexivity.
+Qed.
+
+(** Pocket 37 loses every well-formed European bet.
+    Corollary of [well_formed_out_of_range]. *)
 
 Lemma well_formed_pocket_37_loses :
   forall b, well_formed b -> bet_wins b 37 = false.
 Proof.
-  intros b Hwf; destruct b; simpl in Hwf;
-  try (vm_compute; reflexivity).
-  - (* Straight *) unfold N_POCKETS in Hwf.
-    assert (H37 : 37 =? n = false) by (apply Nat.eqb_neq; lia).
-    change (bet_wins (Straight n) 37) with (37 =? n). exact H37.
-  - (* Split *) destruct Hwf as [Ha [Hb _]]. unfold N_POCKETS in *.
-    assert (Ha37 : 37 =? a = false) by (apply Nat.eqb_neq; lia).
-    assert (Hb37 : 37 =? b = false) by (apply Nat.eqb_neq; lia).
-    change (bet_wins (Split a b) 37) with ((37 =? a) || (37 =? b)).
-    rewrite Ha37, Hb37. reflexivity.
-  - (* Street *) destruct Hwf as [H1 H12].
-    change (bet_wins (Street row) 37) with (in_street 37 row).
-    unfold in_street.
-    replace (37 <=? (row - 1) * 3 + 1 + 2) with false
-      by (symmetry; apply Nat.leb_gt; lia).
-    rewrite andb_false_r. reflexivity.
-  - (* Corner *) destruct Hwf as [H1 [H32 [_ [-> [-> ->]]]]].
-    change (bet_wins (Corner a (a+1) (a+3) (a+4)) 37)
-      with ((37 =? a) || (37 =? a+1) || (37 =? a+3) || (37 =? a+4)).
-    replace (37 =? a) with false by (symmetry; apply Nat.eqb_neq; lia).
-    replace (37 =? a+1) with false by (symmetry; apply Nat.eqb_neq; lia).
-    replace (37 =? a+3) with false by (symmetry; apply Nat.eqb_neq; lia).
-    replace (37 =? a+4) with false by (symmetry; apply Nat.eqb_neq; lia).
-    reflexivity.
-  - (* SixLine *) destruct Hwf as [H1 [H12a [H2 [H12b _]]]].
-    change (bet_wins (SixLine row1 row2) 37)
-      with (in_street 37 row1 || in_street 37 row2).
-    apply orb_false_iff; split; unfold in_street.
-    + replace (37 <=? (row1 - 1) * 3 + 1 + 2) with false
-        by (symmetry; apply Nat.leb_gt; lia).
-      rewrite andb_false_r. reflexivity.
-    + replace (37 <=? (row2 - 1) * 3 + 1 + 2) with false
-        by (symmetry; apply Nat.leb_gt; lia).
-      rewrite andb_false_r. reflexivity.
-  - (* Trio *) destruct Hwf as [Hv|Hv]; subst; vm_compute; reflexivity.
-  - (* FiveNumber *) contradiction.
-  - (* Column *) destruct Hwf as [H1 H3].
-    change (bet_wins (Column col) 37) with (in_column 37 col).
-    unfold in_column.
-    replace (37 <=? 36) with false by reflexivity.
-    rewrite !andb_false_r. reflexivity.
-  - (* Dozen *) destruct Hwf as [H1 H3].
-    do 4 (destruct doz as [|doz]; [try lia; vm_compute; reflexivity|]).
-    lia.
+  intros b Hwf. apply well_formed_out_of_range; [exact Hwf | unfold N_POCKETS; lia].
 Qed.
 
 (** For every well-formed European bet, the American and European
