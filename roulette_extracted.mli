@@ -55,8 +55,6 @@ val map : ('a1 -> 'a2) -> 'a1 list -> 'a2 list
 
 val seq : nat -> nat -> nat list
 
-val nth : nat -> 'a1 list -> 'a1 -> 'a1
-
 val fold_left : ('a1 -> 'a2 -> 'a1) -> 'a2 list -> 'a1 -> 'a1
 
 val filter : ('a1 -> bool) -> 'a1 list -> 'a1 list
@@ -70,7 +68,7 @@ type color =
 | Red
 | Black
 
-val color_table : color list
+val pocket_color_rule : nat -> color
 
 val pocket_color : nat -> color
 

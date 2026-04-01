@@ -150,17 +150,6 @@ let rec seq start = function
 | O -> Nil
 | S len0 -> Cons (start, (seq (S start) len0))
 
-(** val nth : nat -> 'a1 list -> 'a1 -> 'a1 **)
-
-let rec nth n l default =
-  match n with
-  | O -> (match l with
-          | Nil -> default
-          | Cons (x, _) -> x)
-  | S m -> (match l with
-            | Nil -> default
-            | Cons (_, l') -> nth m l' default)
-
 (** val fold_left : ('a1 -> 'a2 -> 'a1) -> 'a2 list -> 'a1 -> 'a1 **)
 
 let rec fold_left f l a0 =
@@ -193,22 +182,40 @@ type color =
 | Red
 | Black
 
-(** val color_table : color list **)
+(** val pocket_color_rule : nat -> color **)
 
-let color_table =
-  Cons (Green, (Cons (Red, (Cons (Black, (Cons (Red, (Cons (Black, (Cons
-    (Red, (Cons (Black, (Cons (Red, (Cons (Black, (Cons (Red, (Cons (Black,
-    (Cons (Black, (Cons (Red, (Cons (Black, (Cons (Red, (Cons (Black, (Cons
-    (Red, (Cons (Black, (Cons (Red, (Cons (Red, (Cons (Black, (Cons (Red,
-    (Cons (Black, (Cons (Red, (Cons (Black, (Cons (Red, (Cons (Black, (Cons
-    (Red, (Cons (Black, (Cons (Black, (Cons (Red, (Cons (Black, (Cons (Red,
-    (Cons (Black, (Cons (Red, (Cons (Black, (Cons (Red,
-    Nil)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+let pocket_color_rule n =
+  match match Nat.eqb n O with
+        | True -> True
+        | False ->
+          Nat.ltb (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+            (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+            O)))))))))))))))))))))))))))))))))))) n with
+  | True -> Green
+  | False ->
+    (match match match Nat.leb (S O) n with
+                 | True -> Nat.leb n (S (S (S (S (S (S (S (S (S (S O))))))))))
+                 | False -> False with
+           | True -> True
+           | False ->
+             (match Nat.leb (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                      (S (S (S O))))))))))))))))))) n with
+              | True ->
+                Nat.leb n (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S (S
+                  (S (S (S (S (S (S (S (S (S (S (S
+                  O))))))))))))))))))))))))))))
+              | False -> False) with
+     | True -> (match Nat.odd n with
+                | True -> Red
+                | False -> Black)
+     | False -> (match Nat.odd n with
+                 | True -> Black
+                 | False -> Red))
 
 (** val pocket_color : nat -> color **)
 
-let pocket_color n =
-  nth n color_table Green
+let pocket_color =
+  pocket_color_rule
 
 (** val is_red : nat -> bool **)
 

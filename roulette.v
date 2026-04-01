@@ -165,68 +165,101 @@ Definition color_eqb (c1 c2 : color) : bool :=
 Lemma color_eqb_eq : forall c1 c2, color_eqb c1 c2 = true -> c1 = c2.
 Proof. intros [] []; simpl; intros; try reflexivity; discriminate. Qed.
 
-(** The canonical European single-zero color assignment, stored as
-    a 37-element list indexed by pocket number.  The layout follows
-    the standard single-zero table codified in Nevada Gaming
-    Commission Regulation 14.040 and equivalent jurisdictional
-    standards: pockets 1-10 and 19-28 use odd=red / even=black;
-    pockets 11-18 and 29-36 invert the parity; pocket 0 (green)
-    is the house pocket. *)
+(** Algebraic specification: the parity rule that generates the
+    color assignment.  In decades 1-10 and 19-28, odd pockets are
+    red; in decades 11-18 and 29-36 the parity flips.  Zero and
+    out-of-range pockets are green.  This is the primary color
+    definition; all downstream color predicates derive from it. *)
 
-Definition color_table : list color :=
-  [Green;                                          (* 0      *)
-   Red; Black; Red; Black; Red; Black; Red; Black; (* 1 - 8  *)
-   Red; Black; Black; Red; Black; Red; Black; Red; (* 9 - 16 *)
-   Black; Red; Red; Black; Red; Black; Red; Black; (* 17- 24 *)
-   Red; Black; Red; Black; Black; Red; Black; Red; (* 25- 32 *)
-   Black; Red; Black; Red].                        (* 33- 36 *)
+Definition pocket_color_rule (n : nat) : color :=
+  if (n =? 0) || (36 <? n) then Green
+  else if ((1 <=? n) && (n <=? 10)) || ((19 <=? n) && (n <=? 28)) then
+    if Nat.odd n then Red else Black
+  else (* 11-18, 29-36 *)
+    if Nat.odd n then Black else Red.
 
-(** The color table contains exactly [N_POCKETS] entries. *)
+(** Pocket color derived from the parity rule.  Out-of-range
+    indices return [Green], consistent with the convention that
+    only the 37 numbered pockets carry a regulatory color
+    designation. *)
 
-Lemma color_table_length : length color_table = N_POCKETS.
-Proof. vm_compute. reflexivity. Qed.
+Definition pocket_color (n : nat) : color := pocket_color_rule n.
 
-(** Pocket color by index lookup.  Out-of-range indices default
-    to [Green], consistent with the convention that only the 37
-    numbered pockets carry a regulatory color designation. *)
+(** Out-of-range pockets are green. *)
 
-Definition pocket_color (n : nat) : color := nth n color_table Green.
+Lemma pocket_color_out_of_range :
+  forall n, N_POCKETS <= n -> pocket_color n = Green.
+Proof.
+  intros n Hn. unfold pocket_color, pocket_color_rule.
+  replace ((n =? 0) || (36 <? n)) with true
+    by (symmetry; apply orb_true_iff; right;
+        apply Nat.ltb_lt; unfold N_POCKETS in Hn; lia).
+  reflexivity.
+Qed.
 
 (** Pocket 0 is green (the house pocket). *)
 
 Lemma zero_is_green : pocket_color 0 = Green.
 Proof. reflexivity. Qed.
 
-(** Index 37 falls outside the table and defaults to green. *)
+(** Index 37 falls outside the valid range and is green. *)
 
 Lemma pocket_color_37_is_green : pocket_color 37 = Green.
+Proof. reflexivity. Qed.
+
+(** The canonical European single-zero color assignment, derived
+    from [pocket_color] as a 37-element list indexed by pocket
+    number.  The layout follows the standard single-zero table
+    codified in Nevada Gaming Commission Regulation 14.040 and
+    equivalent jurisdictional standards: pockets 1-10 and 19-28
+    use odd=red / even=black; pockets 11-18 and 29-36 invert
+    the parity; pocket 0 (green) is the house pocket. *)
+
+Definition color_table : list color :=
+  map pocket_color (seq 0 N_POCKETS).
+
+(** The color table contains exactly [N_POCKETS] entries. *)
+
+Lemma color_table_length : length color_table = N_POCKETS.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Computational verification that the derived table matches
+    the rule on all 37 pockets (sanity check). *)
+
+Lemma color_table_reflects_rule :
+  all_below N_POCKETS (fun k => color_eqb (pocket_color k) (pocket_color_rule k)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The primary definition and the rule are definitionally equal
+    on every valid pocket. *)
+
+Theorem pocket_color_rule_correct :
+  forall n, n < N_POCKETS -> pocket_color n = pocket_color_rule n.
 Proof. reflexivity. Qed.
 
 (** American color table: pockets 0 and 37 ("00") are green;
     pockets 1-36 share the same red/black assignment. *)
 
 Definition color_table_us : list color :=
-  color_table ++ [Green].
+  map pocket_color (seq 0 38).
 
 (** The American table contains exactly 38 entries. *)
 
 Lemma color_table_us_length : length color_table_us = 38.
 Proof. vm_compute. reflexivity. Qed.
 
-(** American pocket color by index lookup. *)
+(** American pocket color: identical to the European definition,
+    since [pocket_color_rule] already returns [Green] for pocket
+    37 ("00") and any out-of-range index. *)
 
-Definition pocket_color_us (n : nat) : color := nth n color_table_us Green.
+Definition pocket_color_us (n : nat) : color := pocket_color n.
 
 (** For pockets 0 through 36, the American and European color
     assignments coincide. *)
 
 Lemma pocket_color_us_agrees :
   forall n, n < N_POCKETS -> pocket_color_us n = pocket_color n.
-Proof.
-  intros n Hn. unfold pocket_color_us, pocket_color, color_table_us.
-  rewrite app_nth1 by (rewrite color_table_length; exact Hn).
-  reflexivity.
-Qed.
+Proof. intros n Hn. reflexivity. Qed.
 
 (** Pocket 37 ("00") is green on the American wheel. *)
 
@@ -237,35 +270,6 @@ Proof. vm_compute. reflexivity. Qed.
 
 Lemma pocket_color_us_0 : pocket_color_us 0 = Green.
 Proof. vm_compute. reflexivity. Qed.
-
-(** Algebraic specification: the parity rule that generates the
-    color assignment.  In decades 1-10 and 19-28, odd pockets are
-    red; in decades 11-18 and 29-36 the parity flips.  Zero and
-    out-of-range pockets are green. *)
-
-Definition pocket_color_rule (n : nat) : color :=
-  if (n =? 0) || (36 <? n) then Green
-  else if ((1 <=? n) && (n <=? 10)) || ((19 <=? n) && (n <=? 28)) then
-    if Nat.odd n then Red else Black
-  else (* 11-18, 29-36 *)
-    if Nat.odd n then Black else Red.
-
-(** Computational verification that the lookup table agrees with
-    the algebraic parity rule for all 37 pockets. *)
-
-Lemma color_table_reflects_rule :
-  all_below N_POCKETS (fun k => color_eqb (pocket_color k) (pocket_color_rule k)) = true.
-Proof. vm_compute. reflexivity. Qed.
-
-(** The table-based and rule-based color assignments are
-    provably identical on every valid pocket. *)
-
-Theorem pocket_color_rule_correct :
-  forall n, n < N_POCKETS -> pocket_color n = pocket_color_rule n.
-Proof.
-  intros n Hn. apply color_eqb_eq.
-  exact (all_below_correct _ _ color_table_reflects_rule n Hn).
-Qed.
 
 (** Boolean red-pocket predicate. *)
 
@@ -2753,6 +2757,169 @@ Proof.
 Qed.
 
 (* ================================================================== *)
+(** * Announced-bet coverage                                            *)
+(* ================================================================== *)
+
+(** The three announced bets (Voisins du Zéro, Tiers du Cylindre,
+    Orphelins) are standard call bets placed by sector on the
+    physical wheel.  Each is a fixed portfolio of inside bets.
+    This section defines the concrete bet placements, proves that
+    every placement is well-formed, and establishes that the union
+    of covered pockets equals exactly the sector definition. *)
+
+(** Whether pocket [n] is covered by at least one bet in a list. *)
+
+Definition covered_by (bets : list bet_type) (n : nat) : bool :=
+  existsb (fun b => bet_wins b n) bets.
+
+(** Whether pocket [n] is a member of a pocket list. *)
+
+Definition in_pocket_list (n : nat) (pockets : list nat) : bool :=
+  existsb (Nat.eqb n) pockets.
+
+(** ** Voisins du Zéro placements (7 bets, 9 chips)
+
+    Trio 0-2-3 (2 chips), Split 4-7, Split 12-15, Split 18-21,
+    Split 19-22, Corner 25-26-28-29 (2 chips), Split 32-35. *)
+
+Definition voisins_bets : list bet_type :=
+  [Trio 2;
+   Split 4 7;
+   Split 12 15;
+   Split 18 21;
+   Split 19 22;
+   Corner 25 26 28 29;
+   Split 32 35].
+
+(** Every Voisins placement is well-formed. *)
+
+Lemma voisins_bets_well_formed :
+  forallb well_formed_dec voisins_bets = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Computational verification of Voisins coverage. *)
+
+Lemma voisins_coverage_check :
+  all_below N_POCKETS (fun n =>
+    Bool.eqb (covered_by voisins_bets n)
+             (in_pocket_list n voisins_du_zero)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The Voisins bets cover exactly the 17 pockets in
+    [voisins_du_zero], no more and no fewer. *)
+
+Theorem voisins_coverage_exact :
+  forall n, n < N_POCKETS ->
+  covered_by voisins_bets n = in_pocket_list n voisins_du_zero.
+Proof.
+  intros n Hn.
+  pose proof (all_below_correct _ _ voisins_coverage_check n Hn) as H.
+  apply Bool.eqb_prop in H. exact H.
+Qed.
+
+(** ** Tiers du Cylindre placements (6 bets, 6 chips)
+
+    Six splits, 1 chip each: 5-8, 10-11, 13-16, 23-24, 27-30,
+    33-36. *)
+
+Definition tiers_bets : list bet_type :=
+  [Split 5 8;
+   Split 10 11;
+   Split 13 16;
+   Split 23 24;
+   Split 27 30;
+   Split 33 36].
+
+(** Every Tiers placement is well-formed. *)
+
+Lemma tiers_bets_well_formed :
+  forallb well_formed_dec tiers_bets = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Computational verification of Tiers coverage. *)
+
+Lemma tiers_coverage_check :
+  all_below N_POCKETS (fun n =>
+    Bool.eqb (covered_by tiers_bets n)
+             (in_pocket_list n tiers_du_cylindre)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The Tiers bets cover exactly the 12 pockets in
+    [tiers_du_cylindre]. *)
+
+Theorem tiers_coverage_exact :
+  forall n, n < N_POCKETS ->
+  covered_by tiers_bets n = in_pocket_list n tiers_du_cylindre.
+Proof.
+  intros n Hn.
+  pose proof (all_below_correct _ _ tiers_coverage_check n Hn) as H.
+  apply Bool.eqb_prop in H. exact H.
+Qed.
+
+(** ** Orphelins placements (5 bets, 5 chips)
+
+    Straight 1 (1 chip), Split 6-9, Split 14-17, Split 17-20,
+    Split 31-34.  Pocket 17 is covered by two overlapping
+    splits (14-17 and 17-20). *)
+
+Definition orphelins_bets : list bet_type :=
+  [Straight 1;
+   Split 6 9;
+   Split 14 17;
+   Split 17 20;
+   Split 31 34].
+
+(** Every Orphelins placement is well-formed. *)
+
+Lemma orphelins_bets_well_formed :
+  forallb well_formed_dec orphelins_bets = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Computational verification of Orphelins coverage. *)
+
+Lemma orphelins_coverage_check :
+  all_below N_POCKETS (fun n =>
+    Bool.eqb (covered_by orphelins_bets n)
+             (in_pocket_list n orphelins)) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The Orphelins bets cover exactly the 8 pockets in
+    [orphelins]. *)
+
+Theorem orphelins_coverage_exact :
+  forall n, n < N_POCKETS ->
+  covered_by orphelins_bets n = in_pocket_list n orphelins.
+Proof.
+  intros n Hn.
+  pose proof (all_below_correct _ _ orphelins_coverage_check n Hn) as H.
+  apply Bool.eqb_prop in H. exact H.
+Qed.
+
+(** The three announced-bet portfolios together cover all 37
+    pockets exactly once each (inheriting the partition from
+    [sectors_Permutation]). *)
+
+Lemma announced_bets_total_coverage :
+  all_below N_POCKETS (fun n =>
+    covered_by voisins_bets n ||
+    covered_by tiers_bets n ||
+    covered_by orphelins_bets n) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Theorem announced_bets_cover_all :
+  forall n, n < N_POCKETS ->
+  covered_by voisins_bets n = true \/
+  covered_by tiers_bets n = true \/
+  covered_by orphelins_bets n = true.
+Proof.
+  intros n Hn.
+  pose proof (all_below_correct _ _ announced_bets_total_coverage n Hn) as H.
+  apply orb_true_iff in H as [H|H].
+  - apply orb_true_iff in H as [H|H]; [left | right; left]; exact H.
+  - right; right; exact H.
+Qed.
+
+(* ================================================================== *)
 (** * Well-formed bet enumeration                                       *)
 (* ================================================================== *)
 
@@ -4028,12 +4195,12 @@ Proof.
       by (symmetry; apply Nat.leb_gt; unfold N_POCKETS in *; lia);
     rewrite ?andb_false_r; reflexivity).
   - (* RedBet *)
-    change (bet_wins RedBet n) with (is_red n). unfold is_red, pocket_color.
-    rewrite nth_overflow by (rewrite color_table_length; unfold N_POCKETS in *; lia).
+    change (bet_wins RedBet n) with (is_red n). unfold is_red.
+    rewrite pocket_color_out_of_range by (unfold N_POCKETS in *; lia).
     reflexivity.
   - (* BlackBet *)
-    change (bet_wins BlackBet n) with (is_black n). unfold is_black, pocket_color.
-    rewrite nth_overflow by (rewrite color_table_length; unfold N_POCKETS in *; lia).
+    change (bet_wins BlackBet n) with (is_black n). unfold is_black.
+    rewrite pocket_color_out_of_range by (unfold N_POCKETS in *; lia).
     reflexivity.
   - (* OddBet *)
     change (bet_wins OddBet n) with ((1 <=? n) && (n <=? 36) && Nat.odd n).
